@@ -1,0 +1,968 @@
+#load packages
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+library(magrittr)
+library(cowplot)
+library(plotly)
+library(readxl)
+library(pls)
+library(plsVarSel)
+library(ggfortify)
+library(ggrepel)
+library(pheatmap)
+```
+
+```{r Clear environment}
+### Clear R workspace:
+rm(list=ls())
+```
+
+```{r Check and set working directory}
+### Check current working directory:
+cwd <- getwd()
+cwd
+### Set working directory:
+setwd(cwd) # Set current working directory to location of this notebook for easier handling and saving of data associated with the notebook
+```
+```{r Define ni operator}
+## Define 'not in' (ni) operator
+`%ni%` <- Negate(`%in%`)
+```
+
+```{r Custom ggplot theme for plot background}
+cust.theme <- function(ticks=T, axis="y", box=T, lnsz=1,
+                       xtickangle=0, hjust=NULL, vjust=NULL, fill=NA,
+                       legend.position="right"){
+  theme_out <- theme(legend.position=legend.position)
+  if (ticks == FALSE & axis == "y" ){
+    theme_out <- theme_out + theme(
+      axis.text.y = element_blank(), axis.ticks.y = element_blank(), # Make y axis ticks blank
+      axis.line.y = element_blank(),
+      axis.line.x = element_blank(),
+      panel.background = element_rect(size = lnsz, color = "black", fill = fill),
+      )
+  } else if (ticks == FALSE & axis != "y"){
+    theme_out <- theme_out + theme(
+      axis.text.x = element_blank(), axis.ticks.x = element_blank(), # Make x axis ticks blank
+      axis.line.y = element_blank(),
+      axis.line.x = element_blank(),
+      panel.background = element_rect(size = lnsz, color = "black", fill = fill),
+      )
+  } else {
+     theme_out <- theme_out + theme(
+       axis.line.y = element_blank(),
+       axis.line.x = element_blank(),
+       panel.background = element_rect(size = lnsz, color = "black", fill = fill),
+       axis.text.x = element_text(angle=xtickangle, hjust = hjust, vjust=vjust),
+       ) 
+  }
+  
+  if (xtickangle==90){
+    theme_out <- theme_out + theme(axis.text.x = element_text(angle=xtickangle, hjust = 1, vjust=0.4))
+  }
+  
+  if (box != TRUE) {
+    theme_out <- theme_out + theme(panel.background = element_blank(),
+                                   axis.line.y = element_line(size = lnsz, color = "black"),
+                                   axis.line.x = element_line(size = lnsz, color = "black")
+                                   )
+  } else {
+    theme_out <- theme_out
+  }
+  return(theme_out)
+}
+
+# Julia's Plots.jl default color order:
+julia_cols <- c("#009AFA","#E26E47","#3FA54E","#c270D2","#AD8F18","#01ABAE","#ED5F92","#C68324","#01A98C","#8F961E","#01A9CD","#9B7EE8","#618CF7","#F16072","#DC65B7","#6D9E33")
+```
+The function below is designed to manually calculate PTM-SEA/PTM-SVA enrichment scores using a similar approach to that described by [Krug et al. (2019)](http://doi.org/10.1074/mcp.TIR118.000943). The function accepts a data frame containing enrichment scores for phosphosite-specific signatures, the names of the signatures (must use the name `sig`), and the directionality of the signatures (must use the name `dir`). Signatures can be downloaded from the [PTMSigDB](http://prot-shiny-vm.broadinstitute.org:3838/ptmsigdb-app/). The output of the function can be a matrix (default) or data frame containing the PTM-SEA enrichment scores and the names of the signatures used.
+```{r Custom PTM-SEA function}
+ptmsea_func <- function(es_df, output="matrix"){
+  es_df <- es_df %>% 
+    mutate(dir = factor(dir, levels=c("u","d"))) %>% 
+    group_by(sig) %>% 
+    arrange(dir)
+  numeric_cols <- unlist(lapply(es_df, is.numeric)) # indices of numeric columns
+  scores <- es_df[,numeric_cols] # enrichment scores from ssGSEA/GSVA
+  num_cols <- ncol(scores) # number of spls
+  sigs <- unique(es_df$sig) # names of signatures used
+  num_rows <- sigs %>% length() # number of unique signatures
+
+  ptm_es <- matrix(0, nrow=num_rows, ncol=num_cols, dimnames=list(sigs)) # empty PTM set enrichment score matrix
+  colnames(ptm_es) <- colnames(es_df[,numeric_cols]) # set sample (row) names
+
+  for (i in 1:num_rows){
+    sig_i = sigs[i] # signature of current iteration
+    es_i = es_df %>% subset(sig %in% sig_i)
+
+    ## Up direction scores:
+    es_i.u = es_i %>% subset(dir %in% "u")
+    if(nrow(es_i.u) > 0){
+      up = es_i.u[,numeric_cols] %>% data.matrix()
+    } else {
+      up = 0
+    }
+
+    ## Down direction scores:
+    es_i.d = es_i %>% subset(dir %in% "d")
+    if(nrow(es_i.d) > 0){
+      down = es_i.d[,numeric_cols] %>% data.matrix()
+    } else {
+      down = 0
+    }
+    score_i = up-down
+
+    ## Store the results:
+    ptm_es[i,] = score_i
+    rownames(ptm_es)[i] <- sig_i # set geneset name
+  }
+  
+  if(output == "df"){
+    ## Convert to data frame and return PTM-SEA scores:
+    ptm_es_df <- ptm_es %>% data.frame(sig=rownames(.))
+    return(ptm_es_df)
+  } else {
+    return(ptm_es)
+  }
+}
+
+##RQ function
+rq_func <- function(model){
+  ### Get X and Y matrices:
+  xmat <- model$model$X
+  ymat <- model$model$Y
+  ### Performance metrics:
+  R2X <- explvar(model)
+  names(R2X) <- seq(1:length(R2X)) %>% paste("PC",.,sep="")
+  R2X.cum <- cumsum(R2X)
+  PRESS <- model$validation$PRESS
+  ## Calculate R2Y values for PLSR model:
+  model.TSS <- sum((ymat-mean(ymat))^2)
+  R2Y <- 0
+  R2Y.cum <- 0
+  for(i in 1:model$ncomp){
+    R2Y.cum[i] <- (1-sum(model$residuals[,,i]^2)/model.TSS)*100
+    if(i == 1){
+     R2Y[i] <- R2Y.cum[i] 
+    } 
+    else{
+      R2Y[i] <- R2Y.cum[i]-R2Y.cum[i-1]
+    }
+  }
+  ## Calculate Q2Y values for PLSR model:
+  Q2Y <- 0
+  Q2Y.cum <- 0
+  for(i in 1:model$ncomp){
+    Q2Y.cum[i] <- (1-sum(PRESS[,i])/model.TSS)*100
+    if(i == 1){
+      Q2Y[i] <- Q2Y.cum[i] 
+      } 
+    else{
+      Q2Y[i] <- Q2Y.cum[i]-Q2Y.cum[i-1]
+      }
+  }
+  ### Define output list:
+  output <- list(R2X=R2X, R2X.cum=R2X.cum, R2Y=R2Y, R2Y.cum=R2Y.cum, Q2Y=Q2Y, Q2Y.cum=Q2Y.cum)
+  return(output)
+}
+```
+
+#load datasets
+```{r}
+phos.data <- read_excel("1-s2.0-S1535610821000507-mmc3.xlsx", 
+    sheet = "phosphoproteome_normalized")
+kinases <- read_excel("kinases.xlsx") %>% pull(gene)
+```
+#clean up data
+```{r warning=FALSE}
+# remove extraneous columns, 
+phos.data1 <- phos.data %>% 
+  mutate(phos_p = paste(symbol, phosphosites, sep = ".")) %>% 
+  select(-site_id, -peptide, -symbol, -phosphosites) %>%
+  distinct(phos_p, .keep_all = T) %>% 
+  column_to_rownames(var = "phos_p") %>%
+  data.matrix()
+
+p.proteins <- rownames(phos.data1) %>% 
+  .[-grepl(";", .)]
+
+#phos.data1[is.na(phos.data1)] <- 0
+phos.data1 %<>% data.frame()
+
+# filter for phospho-proteins
+phos.data1.t <- phos.data1 %>% t() %>% data.frame() %>% select(one_of(p.proteins))
+
+# filter for kinases
+phos.kinases <- phos.data %>% filter(symbol %in% kinases) %>% 
+  mutate(phos_p = paste(symbol, phosphosites, sep = ".")) %>% 
+  select(-site_id, -peptide, -symbol, -phosphosites) %>%
+  distinct(phos_p, .keep_all = T) %>% 
+  column_to_rownames(var = "phos_p") %>%
+  data.matrix()
+#phos.kinases[is.na(phos.kinases)] <- 0
+phos.kinases %<>% data.frame()
+phos.kinases.t <- t(phos.kinases) %>% data.frame()
+
+```
+
+```{r eval=FALSE, include=FALSE}
+#p.tgfbr <- select(phos.data1.t, TGFBR1.S169)
+#cor.dat <- cor(p.tgfbr, phos.data1.t) %>% t()
+#top.cor <- cor.dat %>% data.frame() %>% top_n(50, TGFBR1.S169)
+
+subset.genes <- c("RELA", "TGFBR1")
+#subset.genes <- c("TP53.")
+p.sub <- select(phos.data1.t, contains(subset.genes), -contains("RELA.S238"))
+p.other <- select(phos.kinases.t, -contains(subset.genes))
+
+
+correl <- cor(p.sub, p.other, use = "pairwise.complete.obs") %>% data.frame()
+
+cor.means <- colMeans(correl) %>% data.frame()
+colnames(cor.means)[1] <- "mean"
+kin.keep <- top_n(cor.means, 25, mean) %>% rownames()
+
+pos.cors <- correl %>% select(kin.keep)
+
+pheatmap(pos.cors)
+
+
+pheatmap(cor(p.sub, use = "pairwise.complete.obs"))
+
+```
+#DEA for samples with high p-TGFBR vs low p-TGFBR
+```{r}
+genes <- "TGFBR1"
+samples.gene <- phos.data1.t %>% select(contains(genes)) %>% mutate(m = rowMeans(., na.rm = T)) %>% 
+  top_frac(0.5, m) %>% 
+  rownames(.)
+
+## Statistical thresholds:
+adjPvalueCutoff1 <- 0.01 # Threshold for adjusted p-values (FDR) for GENE DEA
+logFCcutoff1 <- log2(2) # Threshold for log2(fold-change)
+
+## Gene expression data:
+data_for_lm <- data.frame(t(phos.kinases.t))# %>% rownames_to_column(var = "Sample") %>% 
+#  filter(Sample %in% p.proteins) %>% column_to_rownames(var = "Sample")
+
+
+### Fit linear model with limma: Normalized gene count data #########################################################
+## Define design matrix of sample groups:
+design1 <- cbind(Sample = colnames(data_for_lm)) %>% data.frame()
+design1 %<>% mutate(gene.pos = case_when(
+  Sample %in% samples.gene ~ 1,
+  T ~ 0
+)) %>% mutate(gene.neg = case_when(
+  Sample %in% samples.gene ~ 0,
+  T ~ 1
+)) %>% 
+  column_to_rownames(var = "Sample")
+colnames(design1) <- c("Pos","Neg")
+fit1 <- lmFit(data_for_lm, design1) 
+contr1 <- makeContrasts(PosvsNeg = Pos - Neg, # Make contrasts --> compare groups of interest
+                        levels = colnames(design1))
+## Perform DEA:
+tmp1 <- contrasts.fit(fit1, contr1)
+tmp1 <- eBayes(tmp1)
+allGenes <- topTable(tmp1, sort.by = "P", number=Inf)
+allGenes$ID <- rownames(allGenes) #%>% mapIds(org.Hs.eg.db, ., "SYMBOL", "ENTREZID")
+DEgenes <- topTable(tmp1, number=Inf,
+ p.value=adjPvalueCutoff1, adjust="BH")
+DEgenes$ID <- rownames(DEgenes) #%>% mapIds(org.Hs.eg.db, ., "SYMBOL", "ENTREZID")
+res1 <- decideTests(tmp1, p.value=adjPvalueCutoff1)
+summary(res1)
+DEgenes
+
+###################################### Volcano plot --> GENES ######################################
+txtsz <- 14
+linesz <- 1
+## Save list of ordered, differentially expressed genes:
+allGenes <- mutate(allGenes, gene = allGenes$ID )
+DEAgenes <- allGenes
+#DEAgenes$logFC %>% order() %>% DEAgenes[.,] %>% write.csv("ordered_DEgenes_TGFBR.csv")
+
+
+##PLOTTING
+ggplot(data = allGenes, 
+       aes(x = logFC, y = -log10(P.Value), label = gene)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff1),
+    color = "black", linetype = "dashed", alpha = 0.75, size = 0.75
+  ) +  
+  geom_vline(xintercept = -logFCcutoff1, col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) +  
+  geom_vline(xintercept = logFCcutoff1,col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) + 
+  geom_point(
+    aes(
+        color = P.Value < adjPvalueCutoff1 & abs(logFC) > logFCcutoff1 %>% as.numeric()
+        ),
+    # color = "red",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+                label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
+   geom_text_repel(
+     data = function(x){subset(x, (P.Value < adjPvalueCutoff1) & (abs(logFC) > logFCcutoff1))},
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 15, max.iter = 100000
+   ) +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
+  labs(
+    title = "DEA", 
+    x = expression("Expression log"[2]*"FC"), 
+    y = expression ("-log"[10]*"(p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+
+
+topGenes <- allGenes %>% filter(P.Value < 0.01) 
+topGenes %<>% top_n(15, logFC) %>% 
+  rbind(top_n(topGenes, 15, -logFC)) %>% 
+  arrange(logFC)
+
+ggplot(data = arrange(topGenes, desc(logFC)),
+       aes(y = reorder(ID, logFC),
+           x = logFC,
+       fill = P.Value
+       ))+
+  geom_bar(stat="identity")+
+  labs(
+#    title = "DEA: TGFb+TNFa vs. Untreated", 
+    x = expression("Expression log"[2]*"FC (TGFBR(+) - TGFBR(-)"), 
+    y = element_blank())
+```
+
+#
+```{r}
+genes <- c("RELA.")
+samples.gene <- phos.data1.t %>% select(contains(genes)) %>% mutate(m = rowMeans(., na.rm = T)) %>% 
+  top_frac(0.5, m) %>% 
+  rownames(.)
+
+## Statistical thresholds:
+adjPvalueCutoff1 <- 0.01 # Threshold for adjusted p-values (FDR) for GENE DEA
+logFCcutoff1 <- log2(2) # Threshold for log2(fold-change)
+
+## Gene expression data:
+data_for_lm <- data.frame(t(phos.kinases.t))# %>% rownames_to_column(var = "Sample") %>% 
+#  filter(Sample %in% p.proteins) %>% column_to_rownames(var = "Sample")
+
+
+### Fit linear model with limma: Normalized gene count data #########################################################
+## Define design matrix of sample groups:
+design1 <- cbind(Sample = colnames(data_for_lm)) %>% data.frame()
+design1 %<>% mutate(gene.pos = case_when(
+  Sample %in% samples.gene ~ 1,
+  T ~ 0
+)) %>% mutate(gene.neg = case_when(
+  Sample %in% samples.gene ~ 0,
+  T ~ 1
+)) %>% 
+  column_to_rownames(var = "Sample")
+colnames(design1) <- c("Pos","Neg")
+fit1 <- lmFit(data_for_lm, design1) 
+contr1 <- makeContrasts(PosvsNeg = Pos - Neg, # Make contrasts --> compare groups of interest
+                        levels = colnames(design1))
+## Perform DEA:
+tmp1 <- contrasts.fit(fit1, contr1)
+tmp1 <- eBayes(tmp1)
+allGenes <- topTable(tmp1, sort.by = "P", number=Inf)
+allGenes$ID <- rownames(allGenes) #%>% mapIds(org.Hs.eg.db, ., "SYMBOL", "ENTREZID")
+DEgenes <- topTable(tmp1, number=Inf,
+ p.value=adjPvalueCutoff1, adjust="BH")
+DEgenes$ID <- rownames(DEgenes) #%>% mapIds(org.Hs.eg.db, ., "SYMBOL", "ENTREZID")
+res1 <- decideTests(tmp1, p.value=adjPvalueCutoff1)
+summary(res1)
+DEgenes
+
+###################################### Volcano plot --> GENES ######################################
+txtsz <- 14
+linesz <- 1
+## Save list of ordered, differentially expressed genes:
+allGenes <- mutate(allGenes, gene = allGenes$ID )
+DEAgenes <- allGenes
+#DEAgenes$logFC %>% order() %>% DEAgenes[.,] %>% write.csv("ordered_DEgenes_TGFBR.csv")
+
+
+##PLOTTING
+ggplot(data = allGenes, 
+       aes(x = logFC, y = -log10(P.Value), label = gene)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff1),
+    color = "black", linetype = "dashed", alpha = 0.75, size = 0.75
+  ) +  
+  geom_vline(xintercept = -logFCcutoff1, col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) +  
+  geom_vline(xintercept = logFCcutoff1,col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) + 
+  geom_point(
+    aes(
+        color = P.Value < adjPvalueCutoff1 & abs(logFC) > logFCcutoff1 %>% as.numeric()
+        ),
+    # color = "red",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+                label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
+   geom_text_repel(
+     data = function(x){subset(x, (P.Value < adjPvalueCutoff1) & (abs(logFC) > logFCcutoff1))},
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 15, max.iter = 100000
+   ) +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
+  labs(
+    title = "DEA", 
+    x = expression("Expression log"[2]*"FC"), 
+    y = expression ("-log"[10]*"(p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+
+
+topGenes <- allGenes %>% filter(P.Value < adjPvalueCutoff1) 
+topGenes %<>% top_n(15, logFC) %>% 
+  rbind(top_n(topGenes, 15, -logFC)) %>% 
+  arrange(logFC)
+
+ggplot(data = arrange(topGenes, desc(logFC)),
+       aes(y = reorder(ID, logFC),
+           x = logFC,
+       fill = P.Value
+       ))+
+  geom_bar(stat="identity")+
+  labs(
+#    title = "DEA: TGFb+TNFa vs. Untreated", 
+    x = expression("Expression log"[2]*"FC (RELA(+) - RELA(-)"), 
+    y = element_blank())
+```
+
+```{r}
+genes <- c("RELA.", "TGFBR1.")
+samples.gene <- phos.data1.t %>% select(contains(genes)) %>% mutate(m = rowMeans(., na.rm = T)) %>% 
+  top_frac(0.5, m) %>% 
+  rownames(.)
+
+## Statistical thresholds:
+adjPvalueCutoff1 <- 0.01 # Threshold for adjusted p-values (FDR) for GENE DEA
+logFCcutoff1 <- log2(2) # Threshold for log2(fold-change)
+
+## Gene expression data:
+data_for_lm <- data.frame(t(phos.kinases.t))# %>% rownames_to_column(var = "Sample") %>% 
+#  filter(Sample %in% p.proteins) %>% column_to_rownames(var = "Sample")
+
+
+### Fit linear model with limma: Normalized gene count data #########################################################
+## Define design matrix of sample groups:
+design1 <- cbind(Sample = colnames(data_for_lm)) %>% data.frame()
+design1 %<>% mutate(gene.pos = case_when(
+  Sample %in% samples.gene ~ 1,
+  T ~ 0
+)) %>% mutate(gene.neg = case_when(
+  Sample %in% samples.gene ~ 0,
+  T ~ 1
+)) %>% 
+  column_to_rownames(var = "Sample")
+colnames(design1) <- c("Pos","Neg")
+fit1 <- lmFit(data_for_lm, design1) 
+contr1 <- makeContrasts(PosvsNeg = Pos - Neg, # Make contrasts --> compare groups of interest
+                        levels = colnames(design1))
+## Perform DEA:
+tmp1 <- contrasts.fit(fit1, contr1)
+tmp1 <- eBayes(tmp1)
+allGenes <- topTable(tmp1, sort.by = "P", number=Inf)
+allGenes$ID <- rownames(allGenes) #%>% mapIds(org.Hs.eg.db, ., "SYMBOL", "ENTREZID")
+DEgenes <- topTable(tmp1, number=Inf,
+ p.value=adjPvalueCutoff1, adjust="BH")
+DEgenes$ID <- rownames(DEgenes) #%>% mapIds(org.Hs.eg.db, ., "SYMBOL", "ENTREZID")
+res1 <- decideTests(tmp1, p.value=adjPvalueCutoff1)
+summary(res1)
+DEgenes
+
+###################################### Volcano plot --> GENES ######################################
+txtsz <- 14
+linesz <- 1
+## Save list of ordered, differentially expressed genes:
+allGenes <- mutate(allGenes, gene = allGenes$ID )
+DEAgenes <- allGenes
+#DEAgenes$logFC %>% order() %>% DEAgenes[.,] %>% write.csv("ordered_DEgenes_TGFBR.csv")
+
+
+##PLOTTING
+ggplot(data = allGenes, 
+       aes(x = logFC, y = -log10(P.Value), label = gene)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff1),
+    color = "black", linetype = "dashed", alpha = 0.75, size = 0.75
+  ) +  
+  geom_vline(xintercept = -logFCcutoff1, col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) +  
+  geom_vline(xintercept = logFCcutoff1,col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) + 
+  geom_point(
+    aes(
+        color = P.Value < adjPvalueCutoff1 & abs(logFC) > logFCcutoff1 %>% as.numeric()
+        ),
+    # color = "red",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+                label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
+   geom_text_repel(
+     data = function(x){subset(x, (P.Value < adjPvalueCutoff1) & (abs(logFC) > logFCcutoff1))},
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 15, max.iter = 100000
+   ) +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
+  labs(
+    title = "DEA", 
+    x = expression("Expression log"[2]*"FC"), 
+    y = expression ("-log"[10]*"(p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+
+
+topGenes <- allGenes %>% filter(P.Value < adjPvalueCutoff1) 
+topGenes %<>% top_n(15, logFC) %>% 
+  rbind(top_n(topGenes, 15, -logFC)) %>% 
+  arrange(logFC)
+
+ggplot(data = arrange(topGenes, desc(logFC)),
+       aes(y = reorder(ID, logFC),
+           x = logFC,
+       fill = P.Value
+       ))+
+  geom_bar(stat="identity")+
+  labs(
+#    title = "DEA: TGFb+TNFa vs. Untreated", 
+    x = expression("Expression log"[2]*"FC"), 
+    y = element_blank())
+```
+
+```{r}
+ggplot(data = phos.data1.t, 
+       aes(x = RELA.S203, y = EGFR.S1166))+
+  geom_point()
+```
+
+# Load CPTAC data
+All CPTAC GBM data were downloaded from the [CPTAC GBM Data Portal](https://cptac-data-portal.georgetown.edu/study-summary/S057) or from the supplemental data for the [associated publication by Wang et al.](https://doi.org/10.1016/j.ccell.2021.01.006).Clinical data for the tumors matching the proteomics data were also obtained from the CPTAC website; these data are loaded first.
+
+```{r Sample phenotype and clinical data, message=F, warning=F}
+## Mass spec sample information:
+# fn_splinfo <- "../CPTAC GBM data/S048_CPTAC_GBM_Discovery_Cohort_TMT11_CaseID_SampleID_AliquotID_Map_Dec2019_r1.xlsx"
+fn_splinfo <- "./Wang et al/Data/GBM_Metadata_CancerCell2021/S057_S048_CPTAC_GBM_Discovery_Cohort_TMT11_CaseID_SampleID_AliquotID_Map_Feb2021_r2.xlsx"
+splinfo <- readxl::read_excel(fn_splinfo, skip=7) %>% 
+  dplyr::select(contains(all_of(c("ID","Tumor","Withdrawn")))) %>%
+  dplyr::rename(case_id = `Case ID (Participant ID)`) %>%
+  mutate(case_id=make.names(case_id)) 
+colnames(splinfo) <- colnames(splinfo) %>% make.names()
+
+## Clinical/phenotype data:
+# fn_clin <- "../CPTAC GBM data/S057_S048_CPTAC_GBM_Discovery_Cohort_Clinical_Data_Feb2021_r2.xlsx"
+fn_clin <- "./Wang et al/Data/GBM_Metadata_CancerCell2021/S057_S048_CPTAC_GBM_Discovery_Cohort_Clinical_Data_Feb2021_r2.xlsx"
+clin_data <- readxl::read_excel(fn_clin, sheet="Patient_Clinical_Attributes")
+colnames(clin_data) <- colnames(clin_data) %>% make.names()
+clin_data <- clin_data %>% mutate(case_id = make.names(case_id))
+
+## Clinical, phenotype, and gene mutation data from Wang et al. supplement:
+# fn_mut <- "../Wang et al/Table_S1.xlsx"
+fn_mut <- "./Wang et al/Table_S1.xlsx"
+mut_data <- readxl::read_excel(fn_mut, sheet="additional_annotations") %>% 
+  dplyr::select(case, contains("_alter_status")) %>% 
+  dplyr::rename(case_id=case) %>% 
+  mutate(EGFR_SV = str_detect(EGFR_alter_status, "SV"),
+         EGFR_AMP = str_detect(EGFR_alter_status, "Amp"),
+         EGFR_WT = str_detect(EGFR_alter_status, "NA"),
+         case_id = make.names(case_id),
+         Aliquot.ID = match(case_id, splinfo$case_id) %>% splinfo$Aliquot.ID[.],
+         ) %>% 
+  na.omit()
+
+## Manta structural variant data:
+fn_sv <- "./Wang et al/Table_S2.xlsx"
+sv_data <- readxl::read_excel(fn_sv, sheet="structural_variant_manta") %>% 
+  mutate(case=make.names(case))
+
+splinfo <- splinfo %>% 
+  filter(case_id %in% clin_data$case_id) %>% 
+  na.omit()
+
+
+```
+
+```{r Load the phosphoproteomics data, message=F}
+## Load data:
+# fn.phos <- "../CPTAC GBM data/CPTAC3_Glioblastoma_Multiforme_Phosphoproteome.phosphosite.tmt11.tsv"
+fn.phos <- "./Wang et al/Data/Proteome/phosphoproteome_mssm_per_gene_clean.v4.0.tsv" 
+raw.phos <- read_tsv(fn.phos) %>%   
+  mutate(site = sub("-", "_", site),
+         site = sub("s|s$", "", site),
+         site = sub("t|t$", "", site),
+         site = sub("y|y$", "", site),
+         site = toupper(site)
+         )
+
+raw.phos$site <- sub("s|s$|t|t$|y|y$", "", raw.phos$site)
+colnames(raw.phos) <- colnames(raw.phos) %>% make.names()
+
+## Clean up data:
+phos1 <- raw.phos %>% # make a copy for use downstream
+  dplyr::rename(Phosphosite=site) %>% 
+  dplyr::select(gene, Phosphosite,
+                # contains(all_of(clin_data$case_id %>% match(splinfo$case_id) %>% na.omit() %>% splinfo$Aliquot.ID[.])),
+                contains(all_of(splinfo$case_id)),
+                # -contains(all_of(c("Unshared","QC1","Withdrawn","Organism","Authority"))), # remove unneeded columns
+                ) #%>% 
+  # group_by(Phosphosite) %>%
+  # mutate(Phosphosite = sub(".*:", paste(gene,"_",sep=""), Phosphosite)) %>%
+  # summarise(across(where(is.numeric), ~mean(.x, na.rm = TRUE)))
+phos1[is.na(phos1)] <- NA
+colnames(phos1) <- make.names(colnames(phos1))
+colnames(phos1) <- sub(".Log.Ratio","",colnames(phos1))
+
+numna <- phos1[,-1] %>% is.na() %>% sum()
+numel <- dim(phos1[,-1]) %>% prod()
+fracna <- numna/numel; fracna
+```
+# PTM-SVA
+
+The [PTMSigDB](http://prot-shiny-vm.broadinstitute.org:3838/ptmsigdb-app/) "is a database comprised of modification site-specific signatures of perturbations, kinase activities and signaling pathways curated from more than 2,500 publications which provides the foundation to perform PTM-SEA." We now load in those signatures and format them for use with the phosphoprotein data to perform PTM set variation analysis (PTM-SVA -> using GSVA instead of ssGSEA as the base algorithm).
+```{r Load PTMsigDB signatures}
+## PTMsigDB collections:
+fn.ptmsigs <- "data_PTMsigDB_all_sites_v1.9.0.xlsx"
+ptmsigs <- readxl::read_xlsx(fn.ptmsigs) %>% 
+  group_by(signature) %>% 
+  mutate(sig_dir = paste(signature, site.direction, sep="_"),
+         site.annotation = site.annotation %>% gsub(":.*","",.)
+         ) %>% 
+  # filter(category %>% str_detect("PATH|KINASE")) %>% # just the kinase and pathway signatures and Src
+  # filter(category %>% str_detect("KINASE")) %>% # just the kinase and pathway signatures
+  # filter(signature %>% str_detect("Pathway|PATHWAY|pathway")) %>% # just the pathway signatures
+  filter(!(signature %>% str_detect("Pancreatic|cancer|Cancer|DISEASE|INFECTION|EXERCISE|DMSO|SERUM"))) # get rid of cancer-specific signatures |PERT
+ptm_sets <- ptmsigs %>% split(x = .$site.annotation, f = .$sig_dir)
+```
+
+Post-translational modification set enrichment analyssis (PTM-SEA) is described by [Krug et al. (2019)](http://doi.org/10.1074/mcp.TIR118.000943). Here, we use our custom approach, which follows the same general steps as Krug et al. except that we use the `GSVA` package to calculate the per-sample enrichment scores for the up/down directions of each PTM signature. We then use our custom function defined above to calculate a single enrichment score for each signature based on the difference between the scores for the up/down directions.
+
+```{r PTM-SVA calculations}
+library(GSVA)
+## Format phosphosite data for gsva function:
+phos3 <- phos1[,-1] %>%
+  ungroup() %>% 
+  dplyr::select(-c(Phosphosite)) %>% 
+  data.matrix()
+rownames(phos3) <- phos1$Phosphosite
+
+## Calculate single-sample phosphosite-specific signature scores:
+phos_ssgsea <- gsva(
+  phos3, 
+  ptm_sets, verbose=F,
+  # method = "ssgsea", tau = 0.75,
+  method = "gsva", #mx.diff = F, abs.ranking = T,
+  min.sz = 3, # Minimum number of sites required to include a signature
+  parallel.sz=detectCores()#-1
+  )
+phos_ssgsea.df <- phos_ssgsea %>%
+  data.frame(sig_dir=rownames(.)) %>% 
+  group_by(sig_dir) %>%
+  mutate(
+    dir = match(sig_dir, ptmsigs$sig_dir) %>% ptmsigs$site.direction[.] %>% unique()
+    ) %>% 
+  separate(sig_dir, into="sig", sep="_d$|_u$",remove=T)
+
+## Calculate PTM-SEA enrichment scores:
+use_ud_diff <- T # take difference between up/down directions of signatures?
+if(use_ud_diff){
+  ptmsva_res <- ptmsea_func(phos_ssgsea.df, output="matrix")
+  ptmsva_res.df <- ptmsea_func(phos_ssgsea.df, output="df")
+  ptmsva_res.df.t <- ptmsva_res %>% t() %>% data.frame(Aliquot.ID=rownames(.))
+} else {
+  ptmsva_res <- phos_ssgsea
+  ptmsva_res.df <- ptmsva_res %>% data.frame(sig_dir=rownames(.))
+  ptmsva_res.df.t <- ptmsva_res %>% t() %>% data.frame(Aliquot.ID=rownames(.))
+}
+```
+
+## PTM-SVA DEnA
+```{r PTM-SVA DEnA calculation}
+library(limma)
+## =============== DEnA with limma: GSVA scores =============== ##
+## Define statistical threshold:
+PvalueCutoff3 <- 0.01 # significance threshold
+
+genes <- c("TGF_BETA", "TNF_ALPHA")
+#genes <- c("TGFBR", "TGFBR2")
+#genes <- "TNF_ALPHA"
+samples.ptm <- ptmsva_res.df.t %>% select(contains(genes)) %>% mutate(m = rowMeans(., na.rm = T)) %>% 
+  top_frac(0.5, m) %>% 
+  rownames(.)
+samples.ptm
+
+sets1 <- ptmsva_res.df.t %>% select(contains(genes))
+
+
+### Fit linear model with limma: Normalized gene count data #########################################################
+## Define design matrix of sample groups:
+design3 <- cbind(Sample = colnames(data_for_lm)) %>% data.frame()
+design3 %<>% mutate(HIGH = case_when(
+  Sample %in% samples.ptm ~ 1,
+  T ~ 0
+)) %>% mutate(LOW = case_when(
+  Sample %in% samples.ptm ~ 0,
+  T ~ 1
+)) %>% 
+  column_to_rownames(var = "Sample")
+
+samples <- colnames(ptmsva_res) 
+design3 %<>% rownames_to_column(var = "spl") %>%
+  filter(spl %in% samples) %>% 
+  arrange() %>% 
+  column_to_rownames("spl")
+
+ptmsva_res1 <- ptmsva_res.df.t %>% 
+  select(-Aliquot.ID) %>% 
+  rownames_to_column(var = "spl") %>% 
+  arrange(spl) %>% 
+  column_to_rownames("spl") %>% 
+  t() %>% 
+  data.matrix()
+
+
+## Perform DEA:
+fit3 <- lmFit(ptmsva_res1, design3)
+contr3 <- makeContrasts(HIvsLOW = HIGH - LOW, # Make contrasts --> compare groups of interest
+                        levels = colnames(design3))
+tmp3 <- contrasts.fit(fit3, contr3)
+tmp3 <- eBayes(tmp3)
+allGeneSets2 <- topTable(tmp3, sort.by = "P", number=Inf) %>% 
+  mutate(ID = rownames(.),
+         collection = sub("\\_.*", "", ID)
+         )
+DEgeneSets2 <- topTable(tmp3, sort.by = "P", number=Inf,
+ p.value=PvalueCutoff3, adjust="fdr") %>% 
+  mutate(ID=rownames(.))
+res3 <- decideTests(tmp3, p.value=PvalueCutoff3)
+summary(res3)
+# DEgeneSets2
+allGeneSets2$ID %<>% gsub("(KINASE.PSP|PATH.NP|PATH.WP)_|_u", "", .)
+
+linesz <- 0.5
+allGeneSets2 %>%
+  filter(P.Value<PvalueCutoff3) %>%
+  top_n(30, abs(logFC)) %>% 
+  arrange(logFC) %>% 
+  mutate(ID=factor(ID,levels=ID)) %>% 
+  ggplot(aes(x=logFC, y=ID, fill=-log10(P.Value))) +
+    geom_vline(xintercept=0, size=linesz) +
+    geom_col(color="black", size=linesz) + 
+    scale_fill_viridis_c(option="inferno") +
+    theme_minimal_grid(8) +
+#    labs(title="CPTAC GBM, PTM set DEnA\nEGFRvIII vs. WT", y="PTM set", x="PTM-SVA score logFC") +
+    guides(color="none")
+#ggsave("PTM-SVA_DEnA-barplot_all-signif-res.png")
+```
+#PLSR - PTMSVA
+```{r}
+library(factoextra)
+
+
+#res.pca <- ptmsva_res.df.t %>% select(-Aliquot.ID) %>% 
+#  prcomp(scale = F)
+#fviz_eig(res.pca)
+
+#fviz_pca_biplot(res.pca, repel=F)
+dat1 <- ptmsva_res.df.t %>% 
+#  select(-contains("PERT")) %>% #filter out PERT pathways - mostly related to drug activity
+  select(-Aliquot.ID)
+#colnames(dat1) %<>% gsub("(KINASE.PSP|PATH.NP|PATH.WP|PERT.PSP)_|_u", "", .)
+
+gene.sets <- c("TGF_BETA", "TNF", "_ATM", "_ATR") # identify which PTM sets are used in y matrix
+
+##PLSR
+x.mat <- dat1 %>% select(-contains(gene.sets)) %>% as.matrix() %>% scale(T, T)
+y.mat <- dat1 %>% select(contains(gene.sets)) %>% as.matrix() %>% scale(T, T)
+
+mydata <- data.frame(Y=I(y.mat),X=I(x.mat))
+pls1 <- plsr(Y~X, scale=F, data=mydata, validation = "LOO", method="kernelpls") # generate PLSR model
+
+#sc <- scores(pls1)
+ld <- loadings(pls1)
+#Ysc <-Yscores(pls1)
+Yld <- Yloadings(pls1)
+
+#VIP score calculations
+vip.scores <- VIP(pls1, opt.comp = 3) %>% as.data.frame()
+colnames(vip.scores) <- "score"
+vip.scores %<>% rownames_to_column("analyte")
+
+#plot VIP scores
+vip.scores %>% 
+  filter(score>1) %>% 
+  arrange() %>% 
+ggplot(aes(y=reorder(analyte, score), x=score))+
+  geom_bar(stat="identity")+
+    theme_cowplot()+
+#  geom_hline(yintercept = 1, linetype = "dashed")+
+  theme(panel.background = element_rect(color = "#000000"))
+
+#plot biplot of scores and loadings - full model
+ggplot()+
+  geom_hline(yintercept = 0, color = "#333333", linetype = "dashed", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "#333333", linetype = "dashed", alpha = 0.7) +
+  geom_point(aes(x=ld[,1], y=ld[,2], alpha=0.5))+
+  geom_point(aes(x=Yld[,1], y=Yld[,2], alpha=0.5, color = "blue"))+
+  geom_text(aes(x=Yld[,1], y=Yld[,2]), color="blue", label = rownames(Yld))+
+  labs(title="", 
+       x="PC1", 
+       y="PC2")+
+  geom_text_repel(aes(x=ld[,1], y=ld[,2]), 
+                  label=rownames(ld),
+                  color="#222222",
+                  size=3)+
+#  geom_text_repel(aes(x=Yld[,1], y=Yld[,2]), 
+#            label=rownames(Yld), size=3, color="blue")+
+  theme_cowplot() +
+  scale_size(
+    limits=c(0,1),
+  )+
+  theme(
+    panel.background = element_rect(color = "#000000"),
+    legend.position = "none"
+  ) +
+  scale_x_continuous(expand=expansion(mult=.1))
+
+#plot R2X, R2Y, Q2Y
+pls1res <- rq_func(pls1)
+R2X <- pls1res$R2X; R2X_cum <- pls1res$R2X.cum
+R2Y <- pls1res$R2Y; R2Y_cum <- pls1res$R2Y.cum
+Q2Y_cum <- pls1res$Q2Y.cum 
+rq2_cum <- cbind(R2X_cum,R2Y_cum,Q2Y_cum); colnames(rq2_cum) <- c("R2X","R2Y","Q2Y")
+comp <- which.max(Q2Y_cum) # number of components for best predictive power (based on Q2Y)
+R2X_cum[comp]
+R2Y_cum[comp]
+Q2Y_cum[comp]
+
+plot(pls1, ncomp=comp, asp=1, line=T, xlab="Actual", ylab="Predicted", main="Parity plots")
+plot(pls1res$R2X.cum, ylab="R2X", xlab="# PCs")
+plot(pls1res$R2Y.cum, ylab="R2Y", xlab="# PCs")
+plot(pls1res$Q2Y.cum, ylab="Q2Y", xlab="# PCs")
+matplot(rq2_cum, pch=c("X","Y","Q"), cex=1, col=c("red","blue","green"), ylab="% var. expl.", xlab="# PCs")
+rq2_cum %>% data.frame(ncomp=seq(1,nrow(.))) %>% pivot_longer(-ncomp) %>% mutate(name=factor(name,levels=colnames(rq2_cum))) %>% 
+  ggplot(aes(ncomp, value, fill=name, color=name, shape=name)) +
+#    geom_vline(xintercept = comp, linetype="dashed") + 
+    geom_point(size=3) + #geom_line(size=1) +
+    theme_cowplot(18) + scale_x_continuous(n.breaks=10) +
+    labs(x="# PCs", y="% var. expl.", color="Metric", shape="Metric", fill="Metric")+
+  theme(panel.background = element_rect(color = "#000000"))+
+  scale_y_continuous(limits = c(0,100))
+
+```
+
+```{r filtered PLSR model}
+#filter out analytes with low VIP scores and regenerate the model
+keep.scores <- vip.scores %>% 
+  filter(score>1) %>% 
+  .[,1]
+x.mat <- data.frame(x.mat) %>% select(keep.scores) %>% data.matrix()
+colnames(x.mat) %<>% gsub("(KINASE.PSP|PATH.NP|PATH.WP|PERT.PSP|PERT.P100.PRM|PERT.P100.DIA)_|_u", "", .)
+colnames(y.mat) %<>% gsub("(KINASE.PSP|PATH.NP|PATH.WP|PERT.PSP|PERT.P100.PRM)_|_u", "", .)
+mydata <- data.frame(Y=I(y.mat),X=I(x.mat))
+pls2 <- plsr(Y~X, scale=F, data=mydata, validation = "LOO", method="kernelpls") # generate PLSR model
+
+#sc <- scores(pls2)
+ld <- loadings(pls2)
+#Ysc <-Yscores(pls2)
+Yld <- Yloadings(pls2)
+
+##loadings plot
+ggplot()+
+  geom_hline(yintercept = 0, color = "#333333", linetype = "dashed", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "#333333", linetype = "dashed", alpha = 0.7) +
+  geom_point(aes(x=ld[,1], y=ld[,2], alpha=0.5))+
+  geom_label(aes(x=Yld[,1], y=Yld[,2]), color="blue", label = rownames(Yld), size = 3)+
+#  geom_point(aes(x=Yld[,1], y=Yld[,2], alpha=0.5))+
+  labs(title="", 
+       x="PC1", 
+       y="PC2")+
+  geom_text_repel(aes(x=ld[,1], y=ld[,2]), 
+                  label=rownames(ld),
+                  color="#222222",
+                  size=3, 
+                  max.overlaps = 80, max.iter = 10000)+
+  theme_cowplot() +
+  scale_size(
+    limits=c(0,1),
+  )+
+  theme(
+    panel.background = element_rect(color = "#000000"),
+    legend.position = "none"
+  ) +
+  scale_x_continuous(expand=expansion(mult=.1))
+#  scale_x_continuous(limits = c(-0.2, 0))
+
+#plot R2X, R2Y, Q2Y
+pls2res <- rq_func(pls2)
+R2X <- pls2res$R2X; R2X_cum <- pls2res$R2X.cum
+R2Y <- pls2res$R2Y; R2Y_cum <- pls2res$R2Y.cum
+Q2Y_cum <- pls2res$Q2Y.cum 
+rq2_cum <- cbind(R2X_cum,R2Y_cum,Q2Y_cum); colnames(rq2_cum) <- c("R2X","R2Y","Q2Y")
+comp <- which.max(Q2Y_cum) # number of components for best predictive power (based on Q2Y)
+R2X_cum[comp]
+R2Y_cum[comp]
+Q2Y_cum[comp]
+
+plot(pls2, ncomp=comp, asp=1, line=T, xlab="Actual", ylab="Predicted", main="Parity plots")
+plot(pls2res$R2X.cum, ylab="R2X", xlab="# PCs")
+plot(pls2res$R2Y.cum, ylab="R2Y", xlab="# PCs")
+plot(pls2res$Q2Y.cum, ylab="Q2Y", xlab="# PCs")
+matplot(rq2_cum, pch=c("X","Y","Q"), cex=1, col=c("red","blue","green"), ylab="% var. expl.", xlab="# PCs")
+rq2_cum %>% data.frame(ncomp=seq(1,nrow(.))) %>% pivot_longer(-ncomp) %>% mutate(name=factor(name,levels=colnames(rq2_cum))) %>% 
+  ggplot(aes(ncomp, value, fill=name, color=name, shape=name)) +
+#    geom_vline(xintercept = comp, linetype="dashed") + 
+    geom_point(size=3) + #geom_line(size=1) +
+    theme_cowplot(18) + scale_x_continuous(n.breaks=10) +
+    labs(x="# PCs", y="% var. expl.", color="Metric", shape="Metric", fill="Metric")+
+  theme(panel.background = element_rect(color = "#000000"))+
+  scale_y_continuous(limits = c(0,100)) + scale_x_continuous(limits = c(0,10))
+
+#VIP score calculations
+vip.scores <- VIP(pls2, opt.comp = comp) %>% data.frame("analyte" = names(.))
+colnames(vip.scores)[1] <- "score"
+
+#plot VIP scores
+vip.scores %>% filter(score>1) %>% 
+arrange() %>% 
+ggplot(aes(y=reorder(analyte, score), x=score))+
+  geom_bar(stat="identity", fill = "lightblue")+
+    theme_cowplot()+
+  theme(panel.background = element_rect(color = "#000000"),
+        axis.text.y = element_text(hjust = 0, margin = margin(l= 20, r=-220)))+
+  labs(x = "VIP score",
+       y = "")
+```
+
+```{r}
+library(Hmisc)
+genes1 <- c("TGFBR1", "RELA", "PRKDC", "ATR.")
+
+phos.sub <- phos.data1.t %>% select(contains(genes1))
+#phos.sub <- phos1 %>% filter(gene %in% genes1) %>% distinct(Phosphosite, .keep_all = T) %>% 
+#  column_to_rownames("Phosphosite") %>% 
+#  .[,-1] %>% 
+#  t() %>% data.matrix()
+phos.cor <- cor(phos.sub, use = "pairwise.complete.obs")
+
+#phos.cor <- rcorr(na.omit(phos.sub))
+pheatmap(phos.cor, na_col = "white")
+
+
+```

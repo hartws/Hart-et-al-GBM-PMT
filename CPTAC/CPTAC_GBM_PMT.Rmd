@@ -1,0 +1,746 @@
+```{r  Load packages,message=FALSE}
+# BiocManager::install(c("limma","GSVA","GSVAdata","org.Hs.eg.db","GSEABase","snow","rlecuyer","edgeR", "gage", "GO.db")) # Comment out this line if you've already installed these packages to your current R distribution.
+### Load packages:
+library(tidyverse)
+library(reshape2)
+library(ggthemes)
+library(ggpubr)
+library(pls)
+library(cowplot)
+library(plotly)
+library(RColorBrewer)
+library(colorspace)
+library(jcolors)
+library(ggsci)
+library(cowplot)
+library(Hmisc)
+library(NMF)
+library(stats)
+library(ggfortify)
+library(ggrepel)
+library(GSVA) # Gene set variation analysis package from Bioconductor --> This package contains a command that can perform four types of gene set enrichment analyses: GSVA, ssGSEA, PLAGE, and z-score.
+library(org.Hs.eg.db)
+library(GSVAdata)
+library(GSEABase)
+library(limma)
+library(msigdbr)
+library(gage)
+library(plyr)
+library(GO.db)
+library(heatmaply)
+library(plsVarSel)
+library(clusterProfiler)
+library(pheatmap)
+library(paletteer)
+library(ConsensusClusterPlus)
+library(M3C)
+```
+
+```{r Clear environment}
+### Clear R workspace:
+rm(list=ls())
+```
+
+```{r Check and set working directory}
+### Check current working directory:
+cwd <- getwd()
+cwd
+### Set working directory:
+setwd(cwd) # Set current working directory to location of this notebook for easier handling and saving of data associated with the notebook
+```
+
+#create functions
+```{r PLSR metrics function}
+library(pls)
+### R2, Q2, and VIP helper function for extracting PLSR model performance metrics:
+rq_func <- function(model){
+  ### Get X and Y matrices:
+  xmat <- model$model$X
+  ymat <- model$model$Y
+  ### Performance metrics:
+  R2X <- explvar(model)
+  names(R2X) <- seq(1:length(R2X)) %>% paste("PC",.,sep="")
+  R2X.cum <- cumsum(R2X)
+  PRESS <- model$validation$PRESS
+  ## Calculate R2Y values for PLSR model:
+  model.TSS <- sum((ymat-mean(ymat))^2)
+  R2Y <- 0
+  R2Y.cum <- 0
+  for(i in 1:model$ncomp){
+    R2Y.cum[i] <- (1-sum(model$residuals[,,i]^2)/model.TSS)*100
+    if(i == 1){
+     R2Y[i] <- R2Y.cum[i] 
+    } 
+    else{
+      R2Y[i] <- R2Y.cum[i]-R2Y.cum[i-1]
+    }
+  }
+  ## Calculate Q2Y values for PLSR model:
+  Q2Y <- 0
+  Q2Y.cum <- 0
+  for(i in 1:model$ncomp){
+    Q2Y.cum[i] <- (1-sum(PRESS[,i])/model.TSS)*100
+    if(i == 1){
+      Q2Y[i] <- Q2Y.cum[i] 
+      } 
+    else{
+      Q2Y[i] <- Q2Y.cum[i]-Q2Y.cum[i-1]
+      }
+  }
+  ### Define output list:
+  output <- list(R2X=R2X, R2X.cum=R2X.cum, R2Y=R2Y, R2Y.cum=R2Y.cum, Q2Y=Q2Y, Q2Y.cum=Q2Y.cum)
+  return(output)
+}
+
+`%ni%` <- Negate(`%in%`)
+```
+
+#load data
+```{r}
+phos.data.load <- read_tsv("gbm_cptac_2021/data_phosphoprotein_quantification.txt")
+
+prot.data.load <- read_tsv("gbm_cptac_2021/data_protein_quantification.txt")
+
+```
+#clean up data
+```{r}
+prot.data <- prot.data.load
+colnames(prot.data)[1] <- "gene"
+prot.data$gene <- prot.data$gene %>% gsub(".*\\|", "", .)
+
+genes <- prot.data$gene %>% data.frame()
+colnames(genes)[1] <- "gene"
+
+genes$entrez <- pull(genes, gene) %>% as.character() %>% mapIds(org.Hs.eg.db, ., "ENTREZID", "SYMBOL")
+
+prot.data <- genes %>% full_join(prot.data, by = "gene")
+
+prot.data1 <- prot.data %>% 
+  dplyr::select(-gene) %>% 
+  filter(!is.na(entrez)) %>% 
+  column_to_rownames("entrez")
+
+```
+
+#GSVA
+##load gene sets
+```{r Load packages and collections, message=F, warning=F}
+### Define MSigDB gene set collection(s) to use --> retrieve with 'msigdbr' package:
+species = "Homo sapiens"
+
+## Retrieve Hallmark and canonical pathways collections in the database:
+hall = msigdbr(species = species, category = "H") 
+cp = msigdbr(species = species, category = "C2", subcategory = "CP") 
+cp.b = msigdbr(species = species, category = "C2", subcategory = "CP:BIOCARTA") 
+cp.r = msigdbr(species = species, category = "C2", subcategory = "CP:REACTOME") 
+cp.p = msigdbr(species = species, category = "C2", subcategory = "CP:PID") 
+cp.k = msigdbr(species = species, category = "C2", subcategory = "CP:KEGG") 
+cp.cgp = msigdbr(species = species, category = "C2", subcategory = "CGP") 
+gene_sets1 <- rbind(hall, cp.b, cp.r, cp.p, cp.k, cp.cgp) %>% split(x = .$entrez_gene, f = .$gs_name)
+gene_sets3 <- rbind(hall, cp.cgp, cp.b, cp.r, cp.p, cp.k) %>% split(x = .$entrez_gene, f = .$gs_name)
+
+## Go collections:
+go.bp <- msigdbr(species = species, category = "C5", subcategory = "GO:BP")
+go.cc <- msigdbr(species = species, category = "C5", subcategory = "GO:CC")
+go.mf <- msigdbr(species = species, category = "C5", subcategory = "GO:MF")
+gene_sets2 <- rbind(go.mf, go.cc, go.bp) %>% split(x = .$entrez_gene, f = .$gs_name)
+gene_sets1 <- gene_sets1 %>% append(gene_sets2)
+
+```
+
+##gsva calc - canonical pathways
+```{r}
+
+data_for_gsva <- prot.data1 %>% data.matrix()
+
+force_calculate_gsva <- F
+if(!file.exists("gsva_results_1.rds") | isTRUE(force_calculate_gsva)){
+  gsva_res <- gsva(
+    data_for_gsva, 
+    gene_sets3, verbose = F, # Change which gene sets are run
+    method = "gsva", 
+    min.sz = 10, # Minimum number of genes required to include a gene set
+    parallel.sz=detectCores()#-1
+    )
+  ## Save GSVA results for speed:
+  saveRDS(gsva_res, file = "gsva_results_1.rds")
+  
+} else if(file.exists("gsva_results_1.rds") & !exists("gsva_res")){ 
+  ## Load GSVA results, if they haven't been loaded/calculated already:
+  gsva_res <- readRDS("gsva_results_1.rds") 
+}
+## Build data frame versions of GSVA results:
+gsva_res.df <- gsva_res %>% data.frame(gene.set=rownames(.), .) # Convert to data frame
+gsva_res.df.t <- gsva_res %>% t() %>% data.frame(ID=rownames(.), .)
+rownames(gsva_res.df) <- gsva_res.df$gene.set
+
+gsva_res.df.t$ID <- gsva_res.df.t$ID %>% gsub("-", ".", .)
+
+```
+#Consensus clustering
+
+```{r}
+
+seed1 <- 12345
+subtype_genes <- c(gene_sets1$VERHAAK_GLIOBLASTOMA_MESENCHYMAL, gene_sets1$VERHAAK_GLIOBLASTOMA_PRONEURAL, gene_sets1$VERHAAK_GLIOBLASTOMA_CLASSICAL)
+
+
+d <- prot.data1
+#d <- d[subtype_genes,]
+
+#mads <- apply(d, 1, mad)
+#d <- d[rev(order(mads))[1:5000],]
+d <- sweep(d, 1, apply(d, 1, median, na.rm = T)) %>% 
+  na.omit() %>% 
+  data.matrix()
+
+cc <- ConsensusClusterPlus(d, 
+                           maxK = 6,
+                           reps = 1000,
+                           pItem = 0.8, 
+                           pFeature = 1,
+                           clusterAlg = "pam",
+                           distance = "pearson",
+                           seed = seed1)
+
+icl <- calcICL(cc)
+grps <- icl[["itemConsensus"]]
+
+numgrps <- 2
+
+grps <- grps %>% 
+  filter(k==numgrps) %>% 
+  group_by(item) %>% 
+  filter(itemConsensus==max(itemConsensus))
+
+grps$item <- grps$item %>% sub("-", ".", .)
+
+##figure out which group belongs to which verhaak subtype
+gsva_res.df.t %>% 
+  dplyr::select(one_of("ID", "VERHAAK_GLIOBLASTOMA_MESENCHYMAL", "VERHAAK_GLIOBLASTOMA_PRONEURAL")) %>% 
+  inner_join(grps, by = c("ID" = "item")) %>% 
+  ggplot(aes(x = VERHAAK_GLIOBLASTOMA_MESENCHYMAL, y = VERHAAK_GLIOBLASTOMA_PRONEURAL, color = factor(cluster)))+
+  geom_point()
+```
+
+```{r}
+seed1 <- 12345
+subtype_genes <- c(gene_sets1$VERHAAK_GLIOBLASTOMA_MESENCHYMAL, gene_sets1$VERHAAK_GLIOBLASTOMA_PRONEURAL, gene_sets1$VERHAAK_GLIOBLASTOMA_CLASSICAL)
+
+
+d <- prot.data1 %>% na.omit()
+d <- d[subtype_genes,] %>% na.omit()
+
+res <- M3C(d, removeplots = F, iters=25, fsize=8, clusteralg = "pam", seed = seed1)
+
+grps <- res$realdataresults[[3]]$assignments %>% data.frame() %>% rownames_to_column(var = "item")
+colnames(grps)[2] <- "cluster"
+grps$item <- grps$item %>% sub("-", ".", .)
+
+gsva_res.df.t %>% 
+  dplyr::select(one_of("ID", "VERHAAK_GLIOBLASTOMA_MESENCHYMAL", "VERHAAK_GLIOBLASTOMA_PRONEURAL")) %>% 
+  inner_join(grps, by = c("ID" = "item")) %>% 
+  ggplot(aes(x = VERHAAK_GLIOBLASTOMA_MESENCHYMAL, y = VERHAAK_GLIOBLASTOMA_PRONEURAL, color = factor(cluster)))+
+  geom_point()
+
+count(grps, vars = "cluster")
+
+
+```
+
+```{r}
+library(dendextend)
+
+gsva.verhaak <- gsva_res.df %>% filter(gene.set %in% c("VERHAAK_GLIOBLASTOMA_MESENCHYMAL", "VERHAAK_GLIOBLASTOMA_PRONEURAL")) %>% dplyr::select(-gene.set) %>% t() %>% data.frame()
+
+gsva.verhaak %>% t() %>% data.frame() %>% pheatmap(cutree_cols = 1)
+
+d <- dist(gsva.verhaak, method = "euclidean") # distance matrix
+hclust_avg <- hclust(d, "average")
+plot(hclust_avg)
+cut_avg <- cutree(hclust_avg, k=4)
+
+avg_dend_obj <- as.dendrogram(hclust_avg)
+avg_col_dend <- color_branches(avg_dend_obj, k = 4)
+plot(avg_col_dend)
+
+gsva.verhaak.clust <- mutate(gsva.verhaak, cluster = cut_avg) %>% mutate(
+  subtype = case_when(
+    cluster == 1 ~ "mes",
+    cluster == 2 ~ "pn",
+    cluster >=3  ~ "other"
+  )
+)
+
+samples.mes <- gsva.verhaak.clust %>% filter(subtype=="mes") %>% rownames()
+samples.pn <- gsva.verhaak.clust %>% filter(subtype=="pn") %>% rownames()
+
+
+ggplot(gsva.verhaak.clust, aes(x = VERHAAK_GLIOBLASTOMA_MESENCHYMAL, y = VERHAAK_GLIOBLASTOMA_PRONEURAL, color = subtype))+
+  geom_point()
+
+gsva_res_filt <- gsva_res.df.t %>% filter(ID %in% samples.mes | ID %in% samples.pn)
+```
+#DEA-GSVA
+```{r}
+#samples.mes <- grp1
+#samples.pn <- grp3
+
+#plotdata <- gsva_res_filt
+plotdata <- gsva_res.df.t
+
+## Define statistical thresholds:
+logFCcutoff1 <- log2(2) # Threshold for log2(fold-change)
+adjPvalueCutoff <- 10^-2 # Threshold for adjusted p-values (FDR) - use for GO gene set
+## Linear model with limma: GSVA enrichment scores
+
+#create design matrix for DEA
+'design1 <- plotdata %>% 
+  transmute(
+  mes = case_when(
+  .$ID %in% samples.mes ~ 1,
+   T ~ 0
+  ),
+  pn = case_when(
+  .$ID %in% samples.pn ~ 1,
+   T ~ 0
+  )
+) %>% data.matrix()'
+
+design1 <- grps %>% column_to_rownames(var = "item") %>% 
+  transmute(
+    grp1 = case_when(cluster == 1 ~ 1, T ~ 0),
+    grp2 = case_when(cluster == 2 ~ 1, T ~ 0),
+    grp3 = case_when(cluster == 3 ~ 1, T ~ 0),
+  ) %>% data.matrix
+
+#print(paste("MES samples: ", length(filter(plotdata, ID %in% samples.mes)[,1])))
+#print(paste("PN samples: ",length(filter(plotdata, ID %in% samples.pn)[,1])))
+
+plotdata <- plotdata[,-1] %>% t()
+
+fit2 <- lmFit(plotdata, design1)
+contr2 <- makeContrasts(grp3 - grp2, # Make contrasts --> compare groups of interest
+                        levels = colnames(coef(fit2)))
+tmp2 <- contrasts.fit(fit2, contr2)
+tmp2 <- eBayes(tmp2)
+
+allGeneSets <- topTable(tmp2, sort.by = "P", number=Inf)
+allGeneSets$ID <- rownames(allGeneSets)
+DEgeneSets <- topTable(tmp2, sort.by = "P", number=Inf,
+ p.value=adjPvalueCutoff, adjust="BH")
+DEgeneSets$ID <- rownames(DEgeneSets)
+res2 <- decideTests(tmp2, p.value=adjPvalueCutoff)
+summary(res2)
+
+allGeneSets$logFC %>% order() %>% allGeneSets[.,] %>% write.csv("All_gene_sets_CP.csv")
+gene_sets_sub <- filter(allGeneSets, grepl("TGF|TNFA|_NFKB", ID)) %>% rownames()
+
+
+#DEgenes
+DEgeneSets
+DEgeneSets$logFC %>% order() %>% DEgeneSets[.,] %>% write.csv("DEgene_sets_CP.csv")
+
+#### Plots ####
+### Volcano plots --> MvsP gene sets
+
+
+allGeneSets %>% 
+  filter(ID %ni% c(cp.cgp$gs_name, cp.r$gs_name)) %>%   #change this to select which gene sets get plotted
+#  filter(ID %in% hall$gs_name) %>% 
+  ggplot(
+       aes(x = logFC, y = -log10(adj.P.Val), label = ID)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff),
+    col = "black", linetype = "dashed", alpha = 0.6, size = 0.7
+  ) +
+#  geom_vline(xintercept = logFCcutoff1, col = "black", linetype = "dashed", alpha = 0.6, size = 0.7)+
+#  geom_vline(xintercept = -logFCcutoff1, col = "black", linetype = "dashed", alpha = 0.6, size = 0.7)+
+  geom_point(
+    aes(
+        color = adj.P.Val < adjPvalueCutoff %>% as.numeric()
+        ),
+    alpha = 0.5,
+#    cex = 2.5
+  ) +
+#  geom_text(aes(x = -0.5, y = -log10(adjPvalueCutoff),
+#                label = paste("p = ",adjPvalueCutoff)), size = 3, color = "red") +
+  geom_label_repel(
+#    data = function(x){subset(x, adj.P.Val < adjPvalueCutoff)},
+    data = function(x){subset(x, ID %in% gene_sets_sub)},
+    size = 3, alpha = 0.7,
+    segment.size = 0.25, segment.alpha = 1, label.padding = 0.1, max.overlaps = 50, max.iter = 100000
+  ) +
+  geom_point(
+    data = function(x){subset(x, ID %in% gene_sets_sub)},
+    alpha = 0.7
+  ) +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(18,
+    line_size = 0
+  ) +
+  theme(
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 10),
+    panel.background = element_rect(size = 2, color = "black", fill = "white"),
+    ) +
+  labs(
+    title = "Gene Sets: Mesenchymal vs. Proneural",
+    x = expression("GSVA enrichment score log"[2]*"(fold change)"),
+    y = expression("-log"[10]*"(adj. p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+# ggsave("CPTAC_mes_vs_pn_full.png", width = 10, height = 8)
+# ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/CPTAC_mes_pn.svg")
+
+
+## volcano plot with numbers
+geneSetsSub <- allGeneSets %>% filter(ID %ni% cp.cgp$gs_name)
+ranked_sets <- geneSetsSub %>% filter(ID %in% gene_sets_sub) %>% 
+  mutate(rank = 1:nrow(.))
+geneSetsSub <- geneSetsSub %>% full_join(ranked_sets)
+
+geneSetsSub %>% 
+  ggplot(
+       aes(x = logFC, y = -log10(adj.P.Val), label = rank)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff),
+    col = "black", linetype = "dashed", alpha = 0.6, size = 0.7
+  ) +
+  geom_point(
+    aes(
+        color = adj.P.Val < adjPvalueCutoff %>% as.numeric()
+        ),
+    alpha = 0.5,
+#    cex = 2.5
+  ) +
+ geom_text(aes(x = 0, y = -log10(adjPvalueCutoff)*1.1,
+               label = paste("p = ",adjPvalueCutoff)), size = 2, color = "red") +
+    geom_point(
+    data = function(x){subset(x, ID %in% gene_sets_sub)},
+    alpha = 0.7
+  ) +
+  geom_label_repel(
+    data = function(x){subset(x, ID %in% gene_sets_sub)},
+    size = 3, alpha = 0.9, max.overlaps = 20) +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(10,
+    line_size = 0.2
+  ) +
+  theme(
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 10),
+    plot.title = element_text(size = 10),
+    panel.background = element_rect(size = 1, color = "black", fill = "white"),
+    ) +
+  labs(
+    title = "",
+    x = expression("GSVA enrichment score log"[2]*"(fold change)"),
+    y = expression("-log"[10]*"(adj. p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+# ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/CPTAC_mes_pn_numbers.svg", width = 5, height = 4, units = "in")
+rownames(ranked_sets)
+
+allGeneSets %>% 
+  filter(adj.P.Val < adjPvalueCutoff) %>% 
+  arrange(desc(logFC)) %>% 
+  filter(ID %ni% c(cp.cgp$gs_name)) %>%   #change this to select which gene sets get plotted
+  # filter(ID %in% hall$gs_name) %>% 
+  top_n(50, logFC) %>% #abs(logFC)) %>% 
+  ggplot(aes(y = reorder(ID, logFC),  x = logFC, label = ID, fill = adj.P.Val)) +
+  geom_bar(stat= "identity")
+# ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/CPTAC_mes_pn_barchart.png", width = 15, height = 15)
+
+```
+##gsva corr heatmap
+```{r}
+pmt_sets <- c(
+  "HALLMARK_TGF_BETA_SIGNALING",
+  "HALLMARK_HYPOXIA",
+  "HALLMARK_TNFA_SIGNALING_VIA_NFKB",
+  "VERHAAK_GLIOBLASTOMA_MESENCHYMAL",
+  "VERHAAK_GLIOBLASTOMA_PRONEURAL"
+)
+
+pmt_gsva <- gsva_res.df %>% subset(gene.set %in% pmt_sets) %>% dplyr::select(-gene.set)
+
+### Draw heatmap:
+pheatmap(pmt_gsva,
+         clustering_method = "ward.D2", clustering_distance_rows = "canberra",
+         # color = colorRampPalette(paletteer_d("RColorBrewer::PuOr", direction = -1))(101),
+         color = colorRampPalette(paletteer_c("viridis::magma", n=101))(101),
+         #cutree_rows = 2, 
+         cutree_cols = 3,
+         treeheight_row = 1, treeheight_col = 1, border_color = NA,
+         # cellwidth = 7,
+         cellheight = 25,
+         show_colnames = F, angle_col = 90,
+         fontsize = 8,
+         main = "CPTAC GSVA: Enrichment scores",
+         )
+
+corr_data <- pmt_gsva %>% t() %>% data.frame(ID=rownames(.)) 
+
+## Get all pairwise correlations:
+gsva_corrs <- corr_data %>%
+  dplyr::select(-ID) %>% 
+  data.matrix() %>% 
+  rcorr(type="spearman")
+
+len_out <- 20
+pheatmap(gsva_corrs$r,
+         clustering_distance_rows = "euclidean", clustering_distance_cols = "euclidean",
+         clustering_method = "ward.D2",
+         show_colnames = T, show_rownames = T,
+         treeheight_row = 0.3, treeheight_col = 0.3,
+         color = colorRampPalette(pals::coolwarm(len_out))(len_out), 
+         breaks = seq(-1,1,length.out = len_out),
+         fontsize = 6, fontsize_number = 8,
+         cellwidth = 30, cellheight = 30,
+         angle_col = 90, border_color = NA, display_numbers = T,
+         main="CPTAC \nGSVA Enrichment Spearman correlations"
+         # ,
+         # filename = "C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/CPTAC_heatmap.pdf"
+         )
+gsva_corrs$r
+
+gsva_corrs$P
+pheatmap(gsva_corrs$P,
+         clustering_distance_rows = "euclidean", clustering_distance_cols = "euclidean",
+         clustering_method = "ward.D2",
+         show_colnames = T, show_rownames = T,
+         treeheight_row = 0.3, treeheight_col = 0.3,
+         color = colorRampPalette(pals::coolwarm(len_out))(len_out), 
+         fontsize = 6, fontsize_number = 8,
+         cellwidth = 30, cellheight = 30,
+         angle_col = 90, border_color = NA, display_numbers = T,
+         main="CPTAC \nGSVA Enrichment Spearman p-values"
+)
+
+
+```
+
+##boxplots and linear correlations
+```{r}
+library(ggbeeswarm)
+library(ggstatsplot)
+
+gsva.res.subtype <- gsva_res.df.t %>% filter(ID %in% samples.mes | ID %in% samples.pn) %>% 
+  pivot_longer(cols = -ID, names_to = "pathway", values_to = "score") %>% 
+  mutate(subtype = if_else(ID %in% samples.mes, "MES", "PN"))
+
+path.to.plot <- c("HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_HYPOXIA")
+
+gsva.res.subtype$pathway <- gsva.res.subtype$pathway %>% factor(path.to.plot)
+gsva.res.subtype$subtype <- gsva.res.subtype$subtype %>% factor(c("PN", "MES"))
+
+gsva.res.subtype %>% 
+  filter(pathway %in% path.to.plot) %>% 
+  ggplot(aes(x = subtype, y = score, color = pathway))+
+  geom_boxplot()+
+  geom_beeswarm()+
+  facet_wrap(vars(pathway), nrow = 1)+
+  theme_cowplot()+
+  theme(legend.position = "none")+
+  scale_y_continuous(limits = c(-0.5, 0.8))+
+  labs(y = "GSVA Score", x = element_blank())+
+  scale_color_manual(values = c("darkred", "darkgreen", "darkblue"))+
+  theme(text=element_text(size=7), axis.text.x=element_text(size=7),
+          axis.text.y=element_text(size=7))
+ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/CPTAC_GSVA_boxplot.svg", width = 4, height = 3)
+
+for(p in path.to.plot){
+  print(
+  gsva.res.subtype %>% 
+    filter(pathway == p) %>% 
+      ggbetweenstats(x = "subtype", y = "score")+
+    labs(title = p)
+)
+}
+
+path.to.plot2 <- c("HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_HYPOXIA", "VERHAAK_GLIOBLASTOMA_PRONEURAL")
+
+for(p in path.to.plot2){
+  g.cor <- gsva_res.df %>% filter(gene.set == p|gene.set == "VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>% 
+    dplyr::select(-gene.set) %>% 
+    t() %>% 
+    data.matrix()
+  
+  corr1 <- cor.test(g.cor[,1], g.cor[,2], method = "pearson")
+  corr <- as.character(round(corr1$estimate, digits = 3))
+  pval <- as.character(formatC(signif(corr1$p.value, digits=3), digits=2, format="e"))
+  statlab = paste0("R = ",corr,"\n p = ", pval)
+  
+  max.y <- gsva_res.df.t %>% pull(p) %>% max
+  min.x <- gsva_res.df.t %>% pull("VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>% min
+  
+  print(
+    gsva_res.df.t %>% 
+      dplyr::select(!!sym(p), "VERHAAK_GLIOBLASTOMA_MESENCHYMAL")%>% 
+      ggplot(aes(x = VERHAAK_GLIOBLASTOMA_MESENCHYMAL, y = !!sym(p)))+
+      geom_point(size = 0.5)+
+      geom_smooth(method = 'lm')+
+      geom_label(aes(x = min.x*0.7, y = max.y*0.8, label = statlab), size = 1.5)+
+      theme_cowplot()+
+      theme(text=element_text(size=7), axis.text.x=element_text(size=7),
+          axis.text.y=element_text(size=7))
+  )
+  save.loc <- "C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/"
+  ggsave(filename = paste0(save.loc, "CPTAC_GSVA_biplot_", p, ".svg", sep=""), height = 3/2, width = 2)
+}
+
+
+
+```
+
+# hypoxia-Chk2 connection
+```{r}
+library(ggstatsplot)
+gsva.hyp <- gsva_res.df.t %>% dplyr::select(HALLMARK_HYPOXIA, BIOCARTA_HIF_PATHWAY) %>% 
+  rownames_to_column(var = "sample")
+
+chk2.exp <- prot.data %>% filter(gene == "CHEK2") %>% .[,-2] %>% 
+  column_to_rownames(var = "gene") %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var = "sample")
+
+chk2.mat <- full_join(gsva.hyp, chk2.exp)
+
+ggscatterstats(data = chk2.mat,
+               x = HALLMARK_HYPOXIA,
+               y = CHEK2)
+
+ggscatterstats(data = chk2.mat,
+               x = BIOCARTA_HIF_PATHWAY,
+               y = CHEK2)
+
+hyp.med <- median(chk2.mat$HALLMARK_HYPOXIA)
+hif.med <- median(chk2.mat$BIOCARTA_HIF_PATHWAY)
+chk2.mat <- chk2.mat %>% mutate(hypoxia_high = if_else(HALLMARK_HYPOXIA > hyp.med, T, F),
+                                hif_high = if_else(BIOCARTA_HIF_PATHWAY > hif.med, T, F))
+
+ggbetweenstats(data = chk2.mat,
+               x = hypoxia_high,
+               y = CHEK2)
+
+ggbetweenstats(data = chk2.mat,
+               x = hif_high,
+               y = CHEK2)
+
+```
+
+```{r}
+fadd.data <- filter(prot.data, gene %in% c("CHEK2", "ATR")) %>% .[,-2] %>% 
+  column_to_rownames(var = "gene") %>% t() %>% data.frame()
+
+ggscatterstats(data = fadd.data,
+               x = ATR,
+               y = CHEK2)
+
+```
+
+# pathway-protein connection (general)
+```{r}
+library(ggstatsplot)
+
+p1 <- c("HALLMARK_TNFA_SIGNALING_VIA_NFKB")
+# g1 <- c("RPS6", "CHEK2")
+g1 <- prot.data %>% pull(gene) %>% grep("PPP2", ., value = T)
+
+gsva.sub <- gsva_res.df.t %>% dplyr::select(p1) %>% 
+  rownames_to_column(var = "sample")
+
+
+g1.exp <- prot.data %>% filter(gene %in% g1) %>% .[,-2] %>% 
+  column_to_rownames(var = "gene") %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var = "sample")
+
+g1.mat <- full_join(gsva.sub, g1.exp)
+
+
+for(path in p1){
+  for(gene in g1){
+    print(
+      ggscatterstats(data = g1.mat,
+                     x = !!sym(path),
+                     y = !!sym(gene))
+    )
+  }
+}
+
+```
+## phospho data
+```{r}
+prot1 <- c("RPS6")
+path1 <- c("HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_HYPOXIA")
+phos.sub <- phos.data.load %>% filter(GENE_SYMBOL %in% prot1)
+phos.sub$DESCRIPTION <- phos.sub$DESCRIPTION %>% gsub(":.*", "", .)
+
+phos.sub <- phos.sub %>% filter(DESCRIPTION == "RPS6_S235_S236")
+
+
+gsva.sub <- gsva_res.df.t %>% dplyr::select(path1) %>% 
+  rownames_to_column(var = "sample")
+
+
+g1.exp <- phos.sub %>% 
+  column_to_rownames(var = "DESCRIPTION") %>% 
+  .[, 4:ncol(.)] %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var = "sample")
+
+g1.mat <- full_join(gsva.sub, g1.exp)
+
+
+for(path in path1){
+    print(
+      ggscatterstats(data = g1.mat,
+                     x = !!sym(path),
+                     y = RPS6_S235_S236)
+    )
+}
+```
+
+
+```{r}
+prot1 <- c("JNK")
+path1 <- c("HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_HYPOXIA")
+phos.sub <- phos.data.load %>% filter(GENE_SYMBOL %in% prot1)
+phos.sub$DESCRIPTION <- phos.sub$DESCRIPTION %>% gsub(":.*", "", .)
+
+phos.sub <- phos.sub %>% filter(DESCRIPTION == "RPS6_S235_S236")
+
+
+gsva.sub <- gsva_res.df.t %>% dplyr::select(path1) %>% 
+  rownames_to_column(var = "sample")
+
+
+g1.exp <- phos.sub %>% 
+  column_to_rownames(var = "DESCRIPTION") %>% 
+  .[, 4:ncol(.)] %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var = "sample")
+
+g1.mat <- full_join(gsva.sub, g1.exp)
+
+
+for(path in path1){
+    print(
+      ggscatterstats(data = g1.mat,
+                     x = !!sym(path),
+                     y = RPS6_S235_S236)
+    )
+}
+```
+

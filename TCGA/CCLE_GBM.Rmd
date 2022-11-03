@@ -1,0 +1,368 @@
+---
+title: "CCLE_GBM"
+output: html_notebook
+---
+
+```{r  Load packages,message=FALSE}
+# BiocManager::install(c("limma","GSVA","GSVAdata","org.Hs.eg.db","GSEABase","snow","rlecuyer","edgeR", "gage", "GO.db")) # Comment out this line if you've already installed these packages to your current R distribution.
+### Load packages:
+library(tidyverse)
+library(reshape2)
+library(ggthemes)
+library(ggpubr)
+library(pls)
+library(cowplot)
+library(plotly)
+library(RColorBrewer)
+library(colorspace)
+library(jcolors)
+library(ggsci)
+library(cowplot)
+library(Hmisc)
+library(NMF)
+library(stats)
+library(NMF)
+library(ggfortify)
+library(ggrepel)
+library(GSVA) # Gene set variation analysis package from Bioconductor --> This package contains a command that can perform four types of gene set enrichment analyses: GSVA, ssGSEA, PLAGE, and z-score.
+library(org.Hs.eg.db)
+library(GSVAdata)
+library(GSEABase)
+library(limma)
+library(msigdbr)
+library(gage)
+library(plyr)
+library(GO.db)
+library(heatmaply)
+library(plsVarSel)
+```
+
+```{r Clear environment}
+### Clear R workspace:
+rm(list=ls())
+```
+
+```{r Check and set working directory}
+### Check current working directory:
+cwd <- getwd()
+cwd
+### Set working directory:
+setwd(cwd) # Set current working directory to location of this notebook for easier handling and saving of data associated with the notebook
+```
+
+
+START OF CCLE ANALYSIS
+```{r Load CCLE cell line info, warning=FALSE}
+##### Load cell line info:
+## Path for cell line info:
+fn.cells <- "CCLE_sample_info.csv" # Note, as written, this file has been stored one folder up from the current directory in which this notebook file resides -- remove the ../ if the data are in the same directory as this notebook
+
+### Load info for cell lines:
+cl.sum <- read.csv(fn.cells)   #Cell line summaries
+
+## Desired cell line lineages:
+panc.lin <- c("central_nervous_system","lung","pancreas")
+cell.info <- which(cl.sum$lineage %in% panc.lin) %>% cl.sum[.,] # Info of cell lines of interest
+
+a <- split(cell.info, with(cell.info, lineage), drop = TRUE)
+
+## Pull out each specific cancer:
+#panc <- a$pancreas
+glio <- a$central_nervous_system %>% split(., with(.,lineage_subtype)) %>% .$glioma
+#lung <- a$lung
+
+rm(a)
+```
+
+Load CCLE RNA-seq data
+```{r Load CCLE RNA-seq data, warning=FALSE, message=F}
+##### Load CCLE RNA-seq data: log2(TPM+1) values
+## File path for CCLE RNA-seq data:
+fn4 = "CCLE_RNAseq_gene_expression_TPM_log2.csv" # Note, as written, this file has been stored one folder up from the current directory in which this notebook file resides -- remove the ../ if the data are in the same directory as this notebook
+
+### Load CCLE RNA-seq data:
+ccle.rna <- read_csv(fn4, col_names=T)
+ccle.genes <- colnames(ccle.rna)[-1] %>%
+  gsub("\\ .*","",.) # Remove extraneous suffixes on gene names
+colnames(ccle.rna) <- c("Cell.line", ccle.genes)
+```
+
+```{r ,message = F,warning=F}
+## Get desired cell line data:
+ccle.id.rna <- ccle.rna$Cell.line %>% as.character() # Get DepMap IDs from CCLE data
+
+#### GLIOMA ####
+## Pull out glioma cell line IDs, names, and data:
+glio.ind.ccle.rna <- which(ccle.id.rna %in% glio$DepMap_ID) # Match glioma cell line DepMap IDs to DepMap IDs in data set
+glio.id.ccle.rna <- ccle.id.rna[glio.ind.ccle.rna] # DepMap IDs in data set
+glio.name.ccle.rna <- match(glio.id.ccle.rna, glio$DepMap_ID) %>%
+  glio$stripped_cell_line_name[.] # Names
+
+# Pull out the glioma data:
+glio.ccle.rna <- ccle.rna[glio.ind.ccle.rna,] # mRNA expression
+glio.ccle.rna$Cell.line <- glio.name.ccle.rna # Replace DepMap IDs with stripped cell line names
+```
+
+## CCLE RPPA Data
+Reverse-phase protein array (RPPA) data from the CCLE can also be obtained from either the primary CCLE website or from the DepMap Portal.
+
+```{r Load CCLE RPPA data, warning = F, message = F}
+##### Load CCLE RPPA data: 
+## File path for CCLE RPPA data:
+fn5 = "CCLE_RPPA_20181003.csv" # Note, as written, this file has been stored one folder up from the current directory in which this notebook file resides -- remove the ../ if the data are in the same directory as this notebook
+
+## Load CCLE RNA-seq data:
+ccle.rppa <- read_csv(fn5, col_names=T)
+ccle.ans <- colnames(ccle.rppa)[-1] %>% 
+  gsub("\\_Caution.*","",.) # Remove extraneous "_Caution" suffixes on analyte names
+colnames(ccle.rppa) <- c("Cell.line", ccle.ans)
+
+## Get cell line names in RPPA data:
+ccle.names.rppa <- ccle.rppa$Cell.line %>% as.character() # Get CCLE names from CCLE RPPA data
+
+#### GLIOMA ####
+## Pull out the glio IDs, names, and data:
+glio.ind.ccle.rppa <- which(ccle.names.rppa %in% glio$CCLE_Name) # Match glio cell line DepMap IDs to DepMap IDs in data set
+glio.names.ccle.rppa <- ccle.names.rppa[glio.ind.ccle.rppa] %>% 
+  gsub("\\_.*","",.) # Cleaned (stripped) CCLE cell line names
+
+## Pull out the glio data:
+glio.ccle.rppa <- ccle.rppa[glio.ind.ccle.rppa,] # Data
+glio.ccle.rppa$Cell.line <- glio.names.ccle.rppa # Replace DepMap IDs with stripped cell line names
+```
+
+Running PLSR on CCLE RPPA data
+```{r CCLE RPPA PLSR}
+
+rppa.prot <- glio.ccle.rppa
+rppa.prot <- rppa.prot %>% column_to_rownames(var="Cell.line")
+rppa.prot <- rppa.prot %>% scale(center=T, scale=T) %>% as.data.frame()
+rppa.prot <- rppa.prot %>% .[, colSums(is.na(.))==0]
+#cov.rppa <- cov(rppa.prot)
+#heatmaply(cov.rppa)
+
+proteins.y <- c( "Fibronectin", "PAI-1", "Collagen_VI")
+Y <- data.matrix(dplyr::select(rppa.prot, proteins.y))
+X <- dplyr::select(rppa.prot, -proteins.y) %>% as.matrix()
+
+#run PLSR
+mydata <- data.frame(yy=I(Y),xx=I(X))
+PLSR_matrix <- plsr(yy~xx, scale=F, data=mydata, method="kernelpls")
+#summary(PLSR_matrix)
+
+#filtering points based on VIP scores
+score.min <- 1.2
+vip.scores <- VIP(PLSR_matrix, 45) %>% data.frame()
+colnames(vip.scores)[1] <- "VIP.score"
+vip.scores <- rownames_to_column(vip.scores, var="protein")
+vip.scores <- vip.scores %>% filter(VIP.score>score.min)
+proteins.VIP <- vip.scores$protein
+#running PLSR again using only proteins w/ high VIP scores
+
+X <- data.matrix(dplyr::select(rppa.prot, proteins.VIP))
+mydata <- data.frame(yy=I(Y),xx=I(X))
+PLSR_matrix <- plsr(yy~xx, scale=F, data=mydata, method="kernelpls")
+#plot(PLSR_matrix, plottype = "scores")
+sc <- scores(PLSR_matrix)
+ld <- loadings(PLSR_matrix)
+Ysc <-Yscores(PLSR_matrix)
+Yld <- Yloadings(PLSR_matrix)
+ld <- cbind(ld, vip.scores$VIP.score)
+vip.scores <- vip.scores %>% cbind(ld[,1])
+colnames(vip.scores)[ncol(vip.scores)] <- "PC1"
+
+ggplot(data=arrange(vip.scores, desc(VIP.score)), aes(x=reorder(protein, -VIP.score), y=VIP.score, fill=PC1))+
+  geom_bar(stat="identity")+
+  theme_cowplot()+
+  theme(axis.text.x=element_text(angle=90, vjust=.5, hjust=1),
+        panel.background = element_rect(color = "#000000")
+        )+
+  scale_fill_gradient2( # Custom color gradient for bars
+    midpoint=0,
+    low="red",
+    mid="#555555",
+    high="blue",
+    aesthetics="fill"
+  ) +
+  labs(title = paste0("VIP scores > ", score.min),
+       x = element_blank(),
+       y = "VIP score")
+
+ggplot()+
+  geom_hline(yintercept = 0, color = "#333333", linetype = "dashed", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "#333333", linetype = "dashed", alpha = 0.7) +
+  geom_point(aes(x=ld[,1], y=ld[,2], size = (ld[,ncol(ld)]-min(ld[,ncol(ld)]))/max(ld[,ncol(ld)])), alpha=0.5)+
+  geom_point(aes(x=Yld[,1], y=Yld[,2]), color="blue")+
+  labs(title="GBM CCLE RPPA PLSR", 
+       x=paste0("PC1", " (",explvar(PLSR_matrix)[1]%>%round(1), "%)"), 
+       y=paste0("PC2", " (",explvar(PLSR_matrix)[2]%>%round(1), "%)"))+
+  geom_text_repel(aes(x=ld[,1], y=ld[,2]), 
+                  label=rownames(ld),
+                  color="#555555",
+                  size=3)+
+  geom_text_repel(aes(x=Yld[,1], y=Yld[,2]), 
+            label=rownames(Yld), 
+            size=3, 
+            color="blue")+
+  theme_cowplot() +
+  scale_size(
+    limits=c(0,1),
+  )+
+  theme(
+    panel.background = element_rect(color = "#000000"),
+    legend.position = "none"
+  ) +
+  scale_x_continuous(expand=expansion(mult=.1))
+
+#rppa.cov <- cov(Y, X)
+#heatmaply(
+#  rppa.cov,
+#  cexCol = 0.5
+#  )
+#write.table(sc, file="RPPAscores.txt",col.names=T,row.names=T,sep="\t", quote=F)
+#write.table(ld, file="RPPAloadings.txt",col.names=T,row.names=T,sep="\t", quote=F)
+#write.table(Ysc, file="RPPAYscores.txt",col.names=T,row.names=T,sep="\t", quote=F)
+#write.table(Yld, file="RPPAYloadings.txt",col.names=T,row.names=T,sep="\t", quote=F)
+```
+
+
+Running PLSR on CCLE RNA-seq data
+```{r CCLE RNA-seq PLSR}
+
+ccle.rna <- glio.ccle.rna 
+ccle.rna <- ccle.rna %>% column_to_rownames(var="Cell.line")
+ccle.rna <- ccle.rna %>% scale(center=T, scale=T) %>% data.frame()
+ccle.rna <- ccle.rna %>% select_if(~ !any(is.na(.)))
+#ccle.rna <- ccle.rna %>% select_if(is.numeric)
+#ccle.rna <- ccle.rna %>% .[, colSums(is.na(.))==0]
+
+#cor.rna <- cor(t(ccle.rna))
+#heatmaply(cor.rna)
+
+#input list of genes of interest: 33 genes from "A multigene predictor of outcome in glioblastoma" Aldape, 2010
+#genes.y <- c("ACTN1", "AQP1", "CHI3L1", "CLIC1", "COL1A2", "EMP3", "FABP5", "FN1", "GABBR1", "GPNMB", "GRIA2", "IGFBP2", "IGFBP3", "LDHA", "LGALS1", "LGALS3", "MAOB", "NNMT", "OLIG2", "OMG", "PDPN", "PLP2", "RTN1", "S100A10", "SERPINE1", "SERPING1", "TAGLN", "TAGLN2", "TCF12","TGFBI", "TIMP1", "TMSB10", "TNC")
+#genes.y.surv <- c(1, 1, 1, 1, 1, 1, 1, 1, -1, 1, -1, 1, 1, 1, 1, 1, 1, 1, -1, -1, 1, 1, -1, 1, 1, 1, 1, 1, -1,1, 1, 1, 1)
+genes.y <- rbind(
+#  c("AQP1", 1),
+#  c("CHI3L1", 1),
+#  c("EMP3", 1),
+#  c("GPNMB", 1),
+#  c("IGFBP2", 1),
+#  c("LGALS3", 1),
+#  c("OLIG2", -1),
+#  c("PDPN", 1),
+#  c("RTN1", -1)
+  c("FN1", 1),
+  c("DLL3", -1),
+  c("SOX2", -1),
+  c("ERBB3", -1),
+  c("OLIG2", -1),
+  c("CHI3L1", 1),
+  c("TRADD", 1), 
+  c("TLR2", 1),
+  c("RELB", 1)
+#  c("FGFR3", 0),
+#  c("PDGFA", 0),
+#  c("EGFR", 0),
+#  c("AKT2", 0),
+#  c("NES", 0)
+)
+
+colnames(genes.y) <- c("gene", "survival")
+genes.y.surv <- genes.y[,2] %>% as.numeric()
+
+#genes.y <- c( "FN1", "SERPINE1", "COL6A1", "COL1A1", "COL1A2", "CHI3L1", "PDGFRA", "OLIG2", "SOX2")
+Y <- data.matrix(dplyr::select(ccle.rna, genes.y[,1]))
+X <- dplyr::select(ccle.rna, -genes.y[,1]) %>% data.matrix()
+
+#run PLSR
+mydata <- data.frame(yy=I(Y),xx=I(X))
+PLSR_matrix <- plsr(yy~xx, scale=F, data=mydata, method="kernelpls")
+#summary(PLSR_matrix)
+
+#filtering points based on VIP scores
+score.min <- 1.65
+vip.scores <- VIP(PLSR_matrix, 10) %>% data.frame()
+colnames(vip.scores)[1] <- "VIP.score"
+vip.scores <- rownames_to_column(vip.scores, var="gene")
+vip.scores <- vip.scores %>% filter(VIP.score>score.min)
+genes.VIP <- vip.scores$gene
+#running PLSR again using only genes w/ high VIP scores
+
+X <- data.matrix(dplyr::select(ccle.rna, genes.VIP))
+mydata <- data.frame(yy=I(Y),xx=I(X))
+PLSR_matrix <- plsr(yy~xx, scale=F, data=mydata, method="kernelpls")
+#plot(PLSR_matrix, plottype = "scores")
+sc <- scores(PLSR_matrix)
+ld <- loadings(PLSR_matrix)
+Ysc <-Yscores(PLSR_matrix)
+Yld <- Yloadings(PLSR_matrix)
+
+Yld <- cbind(Yld, genes.y.surv)
+ld <- cbind(ld, vip.scores$VIP.score)
+colnames(ld)[ncol(ld)] <- "VIP.score"
+
+vip.scores <- vip.scores %>% cbind(ld[,1])
+colnames(vip.scores)[ncol(vip.scores)] <- "PC1"
+
+ggplot(data=arrange(vip.scores, desc(VIP.score)), 
+       aes(x=reorder(gene, -VIP.score), y=VIP.score, fill=PC1))+
+  geom_bar(stat="identity")+
+  theme_cowplot()+
+  theme(axis.text.x=element_text(angle=90, vjust=.5, hjust=1),
+        panel.background = element_rect(color = "#000000"),)+
+  scale_fill_gradient2( # Custom color gradient for bars
+    midpoint=0,
+    low="red",
+    mid="#555555",
+    high="blue",
+    aesthetics="fill"
+  ) +
+  labs(title = paste0("VIP scores > ", score.min),
+       x = element_blank(),
+       y = "VIP score")
+
+ggplot()+
+  geom_hline(yintercept = 0, color = "#333333", linetype = "dashed", alpha = 0.7) +
+  geom_vline(xintercept = 0, color = "#333333", linetype = "dashed", alpha = 0.7) +
+  geom_point(aes(x=ld[,1], y=ld[,2], size=((ld[,ncol(ld)]-min(ld[,ncol(ld)]))/max(ld[,ncol(ld)]))), alpha=0.5)+
+  geom_point(aes(x=Yld[,1], y=Yld[,2], color=genes.y.surv))+
+  labs(title="GBM CCLE RNA-seq PLSR", 
+       x=paste0("PC1", " (",explvar(PLSR_matrix)[1]%>%round(1), "%)"), 
+       y=paste0("PC2", " (",explvar(PLSR_matrix)[2]%>%round(1), "%)"))+
+  geom_text_repel(aes(x=ld[,1], y=ld[,2]), 
+                  label=rownames(ld),
+                  size=3)+
+  geom_text_repel(aes(x=Yld[,1], y=Yld[,2], color=genes.y.surv), 
+            label=rownames(Yld), 
+            size=3)+
+  scale_color_gradient2( # Custom color gradient for bars
+    limits = c(-1,1),
+    midpoint=0,
+    high="#0033ff",
+    mid="#8f00ff",
+    low="#ff3300"
+  ) +
+    scale_size(
+    limits=c(0,1),
+  )+
+   theme_cowplot() +
+  theme(
+    panel.background = element_rect(color = "#000000"),
+    legend.position = "none"
+  ) +
+  scale_x_continuous(expand=expansion(mult=.05))
+
+
+gene.cov <- cov(Y, X)
+heatmaply(
+  gene.cov,
+  cexCol = 0.5
+  )
+
+
+#write.table(sc, file="RPPAscores.txt",col.names=T,row.names=T,sep="\t", quote=F)
+#write.table(ld, file="RPPAloadings.txt",col.names=T,row.names=T,sep="\t", quote=F)
+#write.table(Ysc, file="RPPAYscores.txt",col.names=T,row.names=T,sep="\t", quote=F)
+#write.table(Yld, file="RPPAYloadings.txt",col.names=T,row.names=T,sep="\t", quote=F)
+```
