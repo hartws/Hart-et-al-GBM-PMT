@@ -139,6 +139,8 @@ counts.filt <- inner_join(
 counts.symbol <- counts.filt %>% dplyr::select(-ensembl) %>% column_to_rownames(var="gene")
 counts.ensembl <- counts.filt %>% dplyr::select(-gene)%>% column_to_rownames(var="ensembl")
 
+
+print(paste0("Number of unique genes with >0 expression: ", nrow(counts.rna[rowSums(counts.rna[])>0,])))
 ```
 
 ```{r Calculate normalized count data}
@@ -494,7 +496,7 @@ paste("Proneural Down:" , diff_exp_lig.p %>%
 
 tnfa_genes <- gene_sets_all$HALLMARK_TNFA_SIGNALING_VIA_NFKB
 tgfb_genes <- gene_sets_all$HALLMARK_TGF_BETA_SIGNALING
-ggplot(subset(allGenes, ID %in% tnfa_genes | ID %in% tgfb_genes),
+ggplot(subset(allGenes, ID %in% tgfb_genes),
        aes(x = logFC, y = -log10(adj.P.Val), label = gene)) +
   geom_hline(
     yintercept = -log10(adjPvalueCutoff1),
@@ -524,6 +526,40 @@ ggplot(subset(allGenes, ID %in% tnfa_genes | ID %in% tgfb_genes),
   guides(
     color = FALSE
   )
+ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/G816_DEA_TGFb+TNFa_Hallmark-TGFb.svg", width = 6, height = 6)
+
+ggplot(subset(allGenes, ID %in% tnfa_genes),
+       aes(x = logFC, y = -log10(adj.P.Val), label = gene)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff1),
+    color = "black", linetype = "dashed", alpha = 0.75, size = 0.75
+  ) +  
+  geom_vline(xintercept = -logFCcutoff1, col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) +  
+  geom_vline(xintercept = logFCcutoff1,col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) + 
+  geom_point(
+    color = "darkblue",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_text_repel(
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 25, max.iter = 5000, color = "darkblue"
+   ) +
+  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+                label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
+  labs(
+    title = "DEA: TGFb+TNFa vs. Untreated, Hallmark TNFa genes", 
+    x = expression("Expression log"[2]*"FC"), 
+    y = expression ("-log"[10]*"(adj. p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/G816_DEA_TGFb+TNFa_Hallmark-TNFa.svg", width = 6, height = 6)
+
 ```
 
 
@@ -1799,7 +1835,7 @@ cpm.pmt <- logcpm %>% data.frame() %>%
   column_to_rownames(var = "gene")
 ```
 
-```{r PCA based on GO EMT sig}
+```{r PCA based on GO EMT sig, eval=FALSE, include=FALSE}
 library(ggfortify)
 library(matrixStats)
 pcamat.pmt <- cpm.pmt %>% data.matrix()
@@ -2124,10 +2160,11 @@ pval <- fgseaRes %>% filter(pathway == "HALLMARK_TGF_BETA_SIGNALING") %>%
 annot <- grobTree(textGrob(bquote(atop(paste("NES: ", .(nes.score)), 
                                        paste("p-value: ", .(pval)))), 
                            x=0.7,  y=0.8, hjust=0,
-  gp=gpar(col="red", fontsize=13)))
+  gp=gpar(col="red", fontsize=10)))
 plotEnrichment(sets.gsea$HALLMARK_TGF_BETA_SIGNALING, TT.ranks) +
-  labs(title = bquote(paste("HALLMARK TGFb - TGF", beta, "+TNF", alpha))) +
+  labs(title = bquote(paste("HALLMARK TGFb"))) +
   annotation_custom(annot)
+ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_HALLMARK-TGFb_TT.svg", width = 6, height = 3, units = "in")
 
 ##HALLMARK TNFA
 nes.score <- fgseaRes %>% filter(pathway == "HALLMARK_TNFA_SIGNALING_VIA_NFKB") %>% 
@@ -2137,10 +2174,11 @@ pval <- fgseaRes %>% filter(pathway == "HALLMARK_TNFA_SIGNALING_VIA_NFKB") %>%
 annot <- grobTree(textGrob(bquote(atop(paste("NES: ", .(nes.score)), 
                                        paste("p-value: ", .(pval)))), 
                            x=0.7,  y=0.8, hjust=0,
-  gp=gpar(col="red", fontsize=13)))
+  gp=gpar(col="red", fontsize=10)))
 plotEnrichment(sets.gsea$HALLMARK_TNFA_SIGNALING_VIA_NFKB, TT.ranks) +
-  labs(title = bquote(paste("HALLMARK TNFa - TGF", beta, "+TNF", alpha))) +
+  labs(title = bquote(paste("HALLMARK TNFa"))) +
   annotation_custom(annot)
+ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_HALLMARK-TNFa_TT.svg", width = 6, height = 3, units = "in")
 
 ##VERHAAK MES
 nes.score <- fgseaRes %>% filter(pathway == "VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>% 
@@ -2724,7 +2762,7 @@ ggplot()+
 ```
 
 ##PLSDA
-```{r}
+```{r eval=FALSE, include=FALSE}
 library(DiscriMiner)
 #genes.mes <- phillips_mes
 #genes.pn <- phillips_pn 
@@ -3267,7 +3305,7 @@ plotEnrichment(sets.gsea$PCEMT_E, TGF.ranks) +
 
 ```
 ###GSVA
-```{r GSVA, eval=FALSE, include=FALSE}
+```{r , eval=FALSE, include=FALSE}
 data_for_gsva <- g528_dat %>% dplyr::select(-gene) %>% distinct(ID, .keep_all = T) %>% 
   column_to_rownames(var = "ID") %>% data.matrix()
 #rownames(data_for_gsva) <- exp.symbol$GeneID
@@ -3759,4 +3797,30 @@ pg1
 
 
 
+```
+
+
+#upset plot
+```{r}
+#generating upset plots for Verhaak, Phillips, and Hallmark TGFb, TNFa, Hypoxia gene sets
+library(ggupset)
+pathway_genes <- data.frame(Pathway = "Verhaak MES", gene = unlist(verhaak.mes)) %>% 
+  rbind(data.frame(Pathway = "Verhaak PN", gene = unlist(verhaak.pn))) %>% 
+  rbind(data.frame(Pathway = "Phillips MES", gene = unlist(phillips_mes))) %>% 
+  rbind(data.frame(Pathway = "Phillips PN", gene = unlist(phillips_pn))) %>% 
+  rbind(data.frame(Pathway = "Segerman", gene = unlist(segerman_mes))) %>% 
+  rbind(data.frame(Pathway = "Hallmark TGFb", gene = unlist(hall.tgfb))) %>% 
+  rbind(data.frame(Pathway = "Hallmark TNFa", gene = unlist(hall.tnfa)))
+
+pathway_genes <- pathway_genes %>% group_by(Pathway) %>% distinct(gene)
+
+pathway_member <- pathway_genes %>% group_by(gene) %>% summarise(Pathways = list(Pathway))
+# pathway_member
+
+pathway_member %>% ggplot(aes(x = Pathways))+
+  geom_bar()+
+  scale_x_upset(order_by = "degree")+
+  geom_text(stat = 'count', aes(label = after_stat(count)), vjust = -1)+
+  scale_y_continuous(limits = c(0, 190))+
+  labs(x = element_blank(), y = "Unique Genes")
 ```
