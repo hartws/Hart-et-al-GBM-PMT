@@ -4,6 +4,7 @@ library(tidyverse)
 library(readxl)
 library(cowplot)
 library(ggpubr)
+library(ggokabeito)
 ```
 
 ```{r Clear environment}
@@ -64,10 +65,31 @@ ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position
   # stat_compare_means(comparisons = "FC", group.by = "gene")+
   labs(x = element_blank(), y = "Normalized Fold Change")+
   theme(axis.text.x = element_text(face = "italic"))+
-  scale_fill_manual(values = colors1, name = element_blank())+
+  # scale_fill_manual(values = colors1, name = element_blank())+
+  scale_fill_okabe_ito()+
   plot_theme
-ggsave("G559_TGFb_TNFa_export.svg", width = 4, height = 2.5, units = "in")
+# ggsave("G559_TGFb_TNFa_export.svg", width = 4, height = 2.5, units = "in")
+ggsave("G559_TGFb_TNFa_export_cb.svg", width = 4, height = 2.5, units = "in")
 
+
+#plot as faceted barplot to help with readability
+dat2a <- dat2 %>% group_by(treat1, gene) %>% 
+  summarise(avg = mean(FC), sd = sd(FC)) %>% ungroup()
+dat2a$treat1 <- dat2a$treat1 %>% gsub("TGFb", "TGF\u03B2", .) %>% gsub("TNFa", "TNF\u03B1", .) %>% 
+  factor(c("Untreated", "TGF\u03B2", "TNF\u03B1", "TGF\u03B2+TNF\u03B1"))
+
+ggplot(dat2a, aes(x = treat1, y = avg, fill = treat1))+
+  geom_bar(stat = "identity", position = position_dodge(0.8))+
+  geom_errorbar(aes(ymax = avg+sd, ymin = avg-sd), width = 0.1)+
+  facet_wrap(~gene, nrow = 1)+
+  scale_fill_manual(values = colors1, name = element_blank())+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  scale_y_continuous(expand = c(0,0), limits = c(0,1.2), breaks = c(0,0.2, 0.4, 0.6, 0.8, 1))+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+        legend.position = "none",
+        strip.text = element_text(face = "italic"))
+ggsave("G559_TGFb_TNFa_export_facet.svg", width = 6, height = 3.5, units = "in")
 
 ##calculating statistical significance using one-way ANOVA + Tukey post-hoc
 anova1 <- aov(FN1 ~ treat1, data = dat)
@@ -130,7 +152,7 @@ hsd1
 
 ```
 ##G816 TGFb, TNFa RTqPCR data (old)
-```{r}
+```{r eval=FALSE, include=FALSE}
 dat <- read_excel("../06-01-22 G816 TGFb TNFa RTqPCR.xlsx", sheet = "Sheet3")
 
 dat2 <- dat %>% pivot_longer(cols = -treat1, names_to = "gene", values_to = "FC") %>% 
@@ -210,6 +232,27 @@ ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position
   scale_fill_manual(values = colors1, name = element_blank())+
   plot_theme
 ggsave("G816_TGFb_TNFa_export_new.svg", width = 4, height = 2.5, units = "in")
+
+#plot as faceted barplot to help with readability
+dat2a <- dat2 %>% group_by(treat1, gene) %>% 
+  summarise(avg = mean(FC), sd = sd(FC)) %>% ungroup()
+dat2a$treat1 <- dat2a$treat1 %>% gsub("TGFb", "TGF\u03B2", .) %>% gsub("TNFa", "TNF\u03B1", .) %>% 
+  factor(c("Untreated", "TGF\u03B2", "TNF\u03B1", "TGF\u03B2+TNF\u03B1"))
+
+ggplot(dat2a, aes(x = treat1, y = avg, fill = treat1))+
+  geom_bar(stat = "identity", position = position_dodge(0.8))+
+  geom_errorbar(aes(ymax = avg+sd, ymin = avg-sd), width = 0.1)+
+  facet_wrap(~gene, nrow = 1)+
+  scale_fill_manual(values = colors1, name = element_blank())+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  scale_y_continuous(expand = c(0,0), limits = c(0,1.2), breaks = c(0,0.2, 0.4, 0.6, 0.8, 1))+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+        legend.position = "none",
+        strip.text = element_text(face = "italic"))
+ggsave("G816_TGFb_TNFa_export_facet.svg", width = 6, height = 3.5, units = "in")
+
+
 
 #statistics
 anova1 <- aov(FN1 ~ treat1, data = dat)
@@ -365,7 +408,23 @@ ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position
   plot_theme
 ggsave("G816_TMZ_export_2.svg", width = 3, height = 2.5, units = "in")
 
+#plot as faceted barplot to help with readability
+dat2a <- dat2 %>% group_by(treat1, gene) %>% 
+  summarise(avg = mean(FC), sd = sd(FC)) %>% ungroup()
 
+
+ggplot(dat2a, aes(x = treat1, y = avg, fill = treat1))+
+  geom_bar(stat = "identity", position = position_dodge(0.8))+
+  geom_errorbar(aes(ymax = avg+sd, ymin = avg-sd), width = 0.1)+
+  facet_wrap(~gene, nrow = 1)+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = element_blank())+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  scale_y_continuous(expand = c(0,0), limits = c(0,1.2), breaks = c(0,0.2, 0.4, 0.6, 0.8, 1))+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+        legend.position = "none",
+        strip.text = element_text(face = "italic"))
+ggsave("G816_TMZ_export_facet.svg", width = 5, height = 3.5, units = "in")
 
 ```
 
@@ -395,6 +454,22 @@ ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position
   plot_theme
 ggsave("G559_TMZ_export.svg", width = 3, height = 2.5, units = "in")
 
+#plot as faceted barplot to help with readability
+dat2a <- dat2 %>% group_by(treat1, gene) %>% 
+  summarise(avg = mean(FC), sd = sd(FC)) %>% ungroup()
+
+ggplot(dat2a, aes(x = treat1, y = avg, fill = treat1))+
+  geom_bar(stat = "identity", position = position_dodge(0.8))+
+  geom_errorbar(aes(ymax = avg+sd, ymin = avg-sd), width = 0.1)+
+  facet_wrap(~gene, nrow = 1)+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = element_blank())+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  scale_y_continuous(expand = c(0,0), limits = c(0,1.2), breaks = c(0,0.2, 0.4, 0.6, 0.8, 1))+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+        legend.position = "none",
+        strip.text = element_text(face = "italic"))
+ggsave("G559_TMZ_export_facet.svg", width = 5, height = 3.5, units = "in")
 # genes <- colnames(dat)[-1]
 # 
 # dat1 <- data.frame()
@@ -438,7 +513,7 @@ dat1 %>%
 
 ```
 ##G464 CM
-```{r}
+```{r eval=FALSE, include=FALSE}
 dat <- read_excel("../11-18-19 G464 CM RTqPCR.xlsx", sheet = "Sheet3")
 
 dat1 <- dat %>% 
@@ -521,7 +596,7 @@ ggsave("G559_hypoxia_export.svg", width = 3, height = 2.5, units = "in")
 
 
 ##KM - MES vs PN
-```{r}
+```{r eval=FALSE, include=FALSE}
 library(survival)
 
 tcga.patient <- read.delim("~/Lab/GBM PMT/TCGA/PMT/tcga_data/data_clinical_patient.txt", comment.char="#")
@@ -539,5 +614,25 @@ legend(80, 0.9, subtypes, col = 1:length(subtypes), lwd = 2, bty = "n")
 print(fit1)
 ```
 
+##matrigel RTqPCR
+```{r}
+dat <- read_excel("../08-01-22 G816 TGFb TNFa sph mgl RTqPCR.xlsx", sheet = "Sheet3")
 
+dat5 <- dat %>% pivot_longer(cols = -c(plating, treat), values_to = "FC", names_to = "gene") %>% 
+  group_by(gene) %>% 
+  mutate(FC = FC/max(FC))
+
+dat5 <- dat5 %>% mutate(col1 = paste(plating, treat, sep = ": "))
+dat5$col1 <- dat5$col1 %>% factor(c("Spheres: Untreated", "Matrigel: Untreated", "Spheres: TGFb+TNFa", "Matrigel: TGFb+TNFa"))
+
+ggbarplot(dat5, x = "gene", y = "FC", add = "mean_se", fill = "col1", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 1, hjust = 1))+
+  scale_fill_manual(values = c("red", "blue", "darkred", "darkblue"), name = element_blank())+
+  plot_theme
+ggsave("G816_matrigel_T+T_export.svg", width = 4, height = 2.5, units = "in")
+
+```
 

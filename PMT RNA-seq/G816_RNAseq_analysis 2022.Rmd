@@ -198,10 +198,14 @@ gene_sets3 <- rbind(go.tft, go.tft_leg) %>% split(x = .$entrez_gene, f = .$gs_na
 cgp.sig <- msigdbr(species = species, category = "C2", subcategory = "CGP") %>% 
   split(x = .$entrez_gene, f = .$gs_name)
 
-phillips_mes <- read_excel("mmc4.xls", sheet = "MES") %>% pull(`Gene Symbol`) %>% match(genes$gene) %>% genes$ensembl[.] %>% na.omit() %>% as.character()
+phillips_mes <- read_excel("mmc4.xls", sheet = "MES") %>% distinct(`Gene Symbol`) %>% pull(`Gene Symbol`) %>% match(genes$gene) %>% genes$ensembl[.] %>% na.omit() %>% as.character()
 
-phillips_pn <- read_excel("mmc4.xls", sheet = "PN") %>% pull(`Gene Symbol`) %>%
+phillips_pn <- read_excel("mmc4.xls", sheet = "PN") %>% distinct(`Gene Symbol`) %>% pull(`Gene Symbol`) %>%
   match(genes$gene) %>% genes$ensembl[.] %>% na.omit() %>% as.character()
+
+phillips_mes_sig <- read_excel("mmc4.xls", sheet = "MES") %>% filter(`Signature gene` == "x") %>% distinct(`Gene Symbol`) %>% pull(`Gene Symbol`) 
+
+phillips_pn_sig <- read_excel("mmc4.xls", sheet = "PN") %>% filter(`Signature gene` == "x") %>% distinct(`Gene Symbol`) %>% pull(`Gene Symbol`) 
 
 segerman_mes <- c("DKK3", "SLC25A43", "FSTL1", "TBX15", "TRIM16", "ZHX3", "BLVRB", "PDCD1LG2", "CLMP", "NWD1", "TMBIM1", "IGDCC4", "LAMA5", "ABCC3", "DAB2", "CSF1", "SLC46A3", "OSMR", "STAMBPL1", "COPZ2", "FAP", "SLC9A9", "FN1", "MRO", "SLC2A10", "MVP", "HTATIP2", "CYP27A1", "SCPEP1", "PPIC", "TPCN1", "AHNAK", "PLBD2", "STOM", "RNLS", "SMPD1", "EMILIN1", "OSTF1", "PER1", "EPHX1", "EDIL3", "QSOX1", "RBMS3", "LOXL1", "C1S", "SHC1", "SERPINB1", "FUCA1", "MSRB3", "MT1G") %>% match(genes$gene) %>% genes$ensembl[.] %>% as.numeric() %>% na.omit()
 
@@ -401,7 +405,7 @@ ggplot(data = allGenes,
   scale_color_manual(values = c("#999999","red")) +
   theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
   labs(
-    title = "DEA: TGFb+TNFa vs. Untreated", 
+    title = "DEA: TGF\u03B2+TNF\u03B1 vs. Untreated", 
     x = expression("Expression log"[2]*"FC"), 
     y = expression ("-log"[10]*"(adj. p-value)")
   ) +
@@ -427,6 +431,7 @@ ggplot(subset(allGenes, ID %in% c(verhaak.mes, verhaak.pn)),
   ) +
   geom_point(data = function(x){subset(x, ID %in% verhaak.pn)},
     color = "darkred",
+    shape = "triangle",
     alpha = 0.5,
     cex = 2.5,
   ) +
@@ -442,12 +447,12 @@ ggplot(subset(allGenes, ID %in% c(verhaak.mes, verhaak.pn)),
      size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
      max.overlaps = 25, max.iter = 5000, color = "darkred"
    ) +
-  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+  geom_text(aes(x = -3, y = -log10(adjPvalueCutoff1),
                 label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
   scale_color_manual(values = c("#999999","red")) +
   theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
   labs(
-    title = "DEA: TGFb+TNFa vs. Untreated", 
+    title = "DEA: TGF\u03B2+TNF\u03B1 vs. Untreated", 
     x = expression("Expression log"[2]*"FC"), 
     y = expression ("-log"[10]*"(adj. p-value)")
   ) +
@@ -528,6 +533,7 @@ ggplot(subset(allGenes, ID %in% tgfb_genes),
   )
 ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/G816_DEA_TGFb+TNFa_Hallmark-TGFb.svg", width = 6, height = 6)
 
+#TNFa genes
 ggplot(subset(allGenes, ID %in% tnfa_genes),
        aes(x = logFC, y = -log10(adj.P.Val), label = gene)) +
   geom_hline(
@@ -561,6 +567,89 @@ ggplot(subset(allGenes, ID %in% tnfa_genes),
 ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/G816_DEA_TGFb+TNFa_Hallmark-TNFa.svg", width = 6, height = 6)
 
 ```
+
+```{r}
+# plot the transcripts from qPCR
+PCR_transcripts <- c("FN1", "CD44", "CHI3L1", "COL1A2", "OLIG2")
+
+ggplot(subset(allGenes, gene %in% PCR_transcripts),
+       aes(x = logFC, y = -log10(adj.P.Val), label = gene)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff1),
+    color = "black", linetype = "dashed", alpha = 0.75, size = 0.75
+  ) +  
+  geom_vline(xintercept = -logFCcutoff1, col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) +  
+  geom_vline(xintercept = logFCcutoff1,col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) + 
+  geom_point(
+    color = "darkblue",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_text_repel(
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 25, max.iter = 5000, color = "darkblue"
+   ) +
+  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+                label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
+  labs(
+    title = "DEA: TGFb+TNFa vs. Untreated, genes measured by qPCR", 
+    x = expression("Expression log"[2]*"FC"), 
+    y = expression ("-log"[10]*"(adj. p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+
+
+#phillips gene sets
+
+ggplot(subset(allGenes, gene %in% c(phillips_mes_sig, phillips_pn_sig)),
+       aes(x = logFC, y = -log10(adj.P.Val), label = gene)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff1),
+    color = "black", linetype = "dashed", alpha = 0.75, size = 0.75
+  ) +  
+  geom_vline(xintercept = -logFCcutoff1, col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) +  
+  geom_vline(xintercept = logFCcutoff1,col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) + 
+  geom_point(data = function(x){subset(x, gene %in% phillips_mes_sig)},
+    color = "darkblue",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_point(data = function(x){subset(x, gene %in% phillips_pn_sig)},
+    color = "darkred",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_text_repel(
+     data = function(x){subset(x, gene %in% phillips_mes_sig)},
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 25, max.iter = 5000, color = "darkblue"
+   ) +
+     geom_text_repel(
+     data = function(x){subset(x, gene %in% phillips_pn_sig)},
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 25, max.iter = 5000, color = "darkred"
+   ) +
+  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+                label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
+  labs(
+    title = "DEA: TGFb+TNFa vs. Untreated, Phillips genes", 
+    x = expression("Expression log"[2]*"FC"), 
+    y = expression ("-log"[10]*"(adj. p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+```
+
 
 
 ### GSOA
@@ -1217,6 +1306,7 @@ ggplot(subset(allGenes, ID %in% c(verhaak.mes, verhaak.pn)),
   ) +
   geom_point(data = function(x){subset(x, ID %in% verhaak.pn)},
     color = "darkred",
+    shape = "triangle",
     alpha = 0.5,
     cex = 2.5,
   ) +
@@ -1232,7 +1322,7 @@ ggplot(subset(allGenes, ID %in% c(verhaak.mes, verhaak.pn)),
      size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
      max.overlaps = 25, max.iter = 5000, color = "darkred"
    ) +
-  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+  geom_text(aes(x = -2, y = -log10(adjPvalueCutoff1),
                 label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
   scale_color_manual(values = c("#999999","red")) +
   theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
@@ -1317,6 +1407,88 @@ ggplot(subset(allGenes, ID %in% hall.tgfb),
   )
 
 ```
+
+```{r}
+#plotting transcripts measured by qPCR
+PCR_transcripts <- c("FN1", "CD44", "CHI3L1", "COL1A2", "OLIG2")
+
+ggplot(subset(allGenes, gene %in% PCR_transcripts),
+       aes(x = logFC, y = -log10(adj.P.Val), label = gene)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff1),
+    color = "black", linetype = "dashed", alpha = 0.75, size = 0.75
+  ) +  
+  geom_vline(xintercept = -logFCcutoff1, col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) +  
+  geom_vline(xintercept = logFCcutoff1,col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) + 
+  geom_point(
+    color = "darkblue",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_text_repel(
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 25, max.iter = 5000, color = "darkblue"
+   ) +
+  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+                label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
+  labs(
+    title = "DEA: TMZ vs. Untreated, genes measured by qPCR", 
+    x = expression("Expression log"[2]*"FC"), 
+    y = expression ("-log"[10]*"(adj. p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+
+#how about also plotting Phillips genes
+
+ggplot(subset(allGenes, gene %in% c(phillips_mes_sig, phillips_pn_sig)),
+       aes(x = logFC, y = -log10(adj.P.Val), label = gene)) +
+  geom_hline(
+    yintercept = -log10(adjPvalueCutoff1),
+    color = "black", linetype = "dashed", alpha = 0.75, size = 0.75
+  ) +  
+  geom_vline(xintercept = -logFCcutoff1, col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) +  
+  geom_vline(xintercept = logFCcutoff1,col = "black",linetype = "dashed",alpha = 0.75,size = 0.75) + 
+  geom_point(data = function(x){subset(x, gene %in% phillips_mes_sig)},
+    color = "darkblue",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_point(data = function(x){subset(x, gene %in% phillips_pn_sig)},
+    color = "darkred",
+    alpha = 0.5,
+    cex = 2.5,
+  ) +
+  geom_text_repel(
+     data = function(x){subset(x, gene %in% phillips_mes_sig)},
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 25, max.iter = 5000, color = "darkblue"
+   ) +
+     geom_text_repel(
+     data = function(x){subset(x, gene %in% phillips_pn_sig)},
+     position = "dodge",
+     size = 3, alpha = 0.9, segment.size = 0.25, segment.alpha = .8,
+     max.overlaps = 25, max.iter = 5000, color = "darkred"
+   ) +
+  geom_text(aes(x = 0, y = -log10(adjPvalueCutoff1),
+                label = paste("p = ",adjPvalueCutoff1)), size = 3, color = "red") +
+  scale_color_manual(values = c("#999999","red")) +
+  theme_cowplot(txtsz, line_size = linesz) + cust.theme(ticks = T, lnsz = linesz) +
+  labs(
+    title = "DEA: TMZ vs. Untreated, Phillips genes", 
+    x = expression("Expression log"[2]*"FC"), 
+    y = expression ("-log"[10]*"(adj. p-value)")
+  ) +
+  guides(
+    color = FALSE
+  )
+```
+
 
 ```{r}
 logFCcutoff1 <- 0 # Threshold for log2(fold-change)
@@ -2164,7 +2336,7 @@ annot <- grobTree(textGrob(bquote(atop(paste("NES: ", .(nes.score)),
 plotEnrichment(sets.gsea$HALLMARK_TGF_BETA_SIGNALING, TT.ranks) +
   labs(title = bquote(paste("HALLMARK TGFb"))) +
   annotation_custom(annot)
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_HALLMARK-TGFb_TT.svg", width = 6, height = 3, units = "in")
+# ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_HALLMARK-TGFb_TT.svg", width = 6, height = 3, units = "in")
 
 ##HALLMARK TNFA
 nes.score <- fgseaRes %>% filter(pathway == "HALLMARK_TNFA_SIGNALING_VIA_NFKB") %>% 
@@ -2178,7 +2350,7 @@ annot <- grobTree(textGrob(bquote(atop(paste("NES: ", .(nes.score)),
 plotEnrichment(sets.gsea$HALLMARK_TNFA_SIGNALING_VIA_NFKB, TT.ranks) +
   labs(title = bquote(paste("HALLMARK TNFa"))) +
   annotation_custom(annot)
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_HALLMARK-TNFa_TT.svg", width = 6, height = 3, units = "in")
+# ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_HALLMARK-TNFa_TT.svg", width = 6, height = 3, units = "in")
 
 ##VERHAAK MES
 nes.score <- fgseaRes %>% filter(pathway == "VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>% 
@@ -2456,6 +2628,34 @@ annot <- grobTree(textGrob(bquote(atop(paste("NES: ", .(nes.score)),
 plotEnrichment(sets.gsea$PCEMT_E, TMZ.ranks) +
   labs(title = "pcEMT-E - TMZ") +
   annotation_custom(annot)
+
+##HALLMARK TGFB
+nes.score <- fgseaRes %>% filter(pathway == "HALLMARK_TGF_BETA_SIGNALING") %>% 
+  .$NES %>% round(2)
+pval <- fgseaRes %>% filter(pathway == "HALLMARK_TGF_BETA_SIGNALING") %>% 
+  .$pval %>% round(4)
+annot <- grobTree(textGrob(bquote(atop(paste("NES: ", .(nes.score)), 
+                                       paste("p-value: ", .(pval)))), 
+                           x=0.7,  y=0.8, hjust=0,
+  gp=gpar(col="red", fontsize=10)))
+plotEnrichment(sets.gsea$HALLMARK_TGF_BETA_SIGNALING, TMZ.ranks) +
+  labs(title = bquote(paste("HALLMARK TGFb"))) +
+  annotation_custom(annot)
+ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_HALLMARK-TGFb_TMZ.svg", width = 6, height = 3, units = "in")
+
+##HALLMARK TNFA
+nes.score <- fgseaRes %>% filter(pathway == "HALLMARK_TNFA_SIGNALING_VIA_NFKB") %>% 
+  .$NES %>% round(2)
+pval <- fgseaRes %>% filter(pathway == "HALLMARK_TNFA_SIGNALING_VIA_NFKB") %>% 
+  .$pval %>% round(4)
+annot <- grobTree(textGrob(bquote(atop(paste("NES: ", .(nes.score)), 
+                                       paste("p-value: ", .(pval)))), 
+                           x=0.7,  y=0.8, hjust=0,
+  gp=gpar(col="red", fontsize=10)))
+plotEnrichment(sets.gsea$HALLMARK_TNFA_SIGNALING_VIA_NFKB, TMZ.ranks) +
+  labs(title = bquote(paste("HALLMARK TNFa"))) +
+  annotation_custom(annot)
+ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_HALLMARK-TNFa_TMZ.svg", width = 6, height = 3, units = "in")
 ```
 ###TGFb+TNFa
 ```{r}
@@ -2472,11 +2672,26 @@ TT.degenes <- read_csv("ordered_DEgenes_TGF+TNF.csv")
 # NEFTEL_MES <- append(neftel.mes1, neftel.mes2) %>% as.integer()
 # NEFTEL_PN <- neftel.opc %>% as.integer()
 
-gene.sets1 <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CGP") %>% 
+sets.gsea1 <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CGP") %>% 
   dplyr::select(gs_name, entrez_gene) %>% filter(gs_name == "VERHAAK_GLIOBLASTOMA_MESENCHYMAL" | gs_name == "VERHAAK_GLIOBLASTOMA_PRONEURAL")
 
-phillips <- data.frame(gs_name = "PHILLIPS_MESENCHYMAL", entrez_gene = as.numeric(phillips_mes)) %>%   rbind(data.frame(gs_name = "PHILLIPS_PRONEURAL", entrez_gene = as.numeric(phillips_pn)))
-sets.gsea1 <- rbind(gene.sets1, phillips)
+phillips <- data.frame(gs_name = "PHILLIPS_MESENCHYMAL", entrez_gene = as.numeric(phillips_mes)) %>% 
+  rbind(data.frame(gs_name = "PHILLIPS_PRONEURAL", entrez_gene = as.numeric(phillips_pn)))
+
+phillips_sig <-  data.frame(gs_name = "PHILLIPS_PRONEURAL_SIG",
+                           entrez_gene = as.numeric(mapIds(org.Hs.eg.db, phillips_pn_sig, 'ENTREZID', 'SYMBOL'))) %>% 
+  rbind(data.frame(gs_name = "PHILLIPS_MESENCHYMAL_SIG",
+                           entrez_gene = as.numeric(mapIds(org.Hs.eg.db, phillips_mes_sig, 'ENTREZID', 'SYMBOL')))) %>%
+  filter(!is.na(entrez_gene))
+
+  
+sets.gsea1 <- rbind(sets.gsea1, phillips)
+sets.gsea1 <- rbind(sets.gsea1, phillips_sig)
+
+neftel <- data.frame(gs_name = "NEFTEL_MES1", entrez_gene = as.numeric(neftel.mes1)) %>% 
+  rbind(data.frame(gs_name = "NEFTEL_MES2", entrez_gene = as.numeric(neftel.mes2))) %>% 
+  rbind(data.frame(gs_name = "NEFTEL_OPC", entrez_gene = as.numeric(neftel.opc)))
+sets.gsea1 <- rbind(sets.gsea1, neftel)
 
 TT.ranks <- TT.degenes$logFC
 names(TT.ranks) <- TT.degenes$ID
@@ -2488,6 +2703,27 @@ TT.ranks <- TT.ranks %>% sort(decreasing = T)
 
 em <- GSEA(TT.ranks, TERM2GENE = sets.gsea1, pvalueCutoff = 1)
 head(em)
+
+
+for(i in 1:length(em$Description)){
+  print(
+    gseaplot(em, geneSetID = i, by = "runningScore", 
+             title = bquote(paste(.(em$Description[i]), ": ", "TGF", beta, "+TNF", alpha)))+
+      annotation_custom(grobTree(textGrob(bquote(atop(paste("NES: ", .(em$NES[i] %>% round(2))), 
+                                                      paste("p-value: ", .(em$pvalue[i] %>% round(4))))), 
+                                          x=0.7,  y=0.8, hjust=0,
+                                          gp=gpar(col="red", fontsize=8))))+
+      plot_theme
+  )
+  save_loc <- paste0("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_", i, "_TT")
+  ggsave(paste0(save_loc, ".svg"))
+  ggsave(paste0(save_loc, ".png"), width = 4, height = 2, units = "in")
+}
+
+
+```
+
+```{r unused code, eval=FALSE, include=FALSE}
 
 ###  1
 gseaplot(em, geneSetID = 1, by = "runningScore", 
@@ -2536,6 +2772,7 @@ ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_4_TT.png", width
 
 
 ```
+
 ```{r} 
 # extra NES plots for EMT signatures
 
@@ -2587,11 +2824,24 @@ TMZ.degenes <- read_csv("ordered_DEgenes_TMZ.csv")
 # NEFTEL_MES <- append(neftel.mes1, neftel.mes2) %>% as.integer()
 # NEFTEL_PN <- neftel.opc %>% as.integer()
 
-gene.sets1 <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CGP") %>% 
+sets.gsea1 <- msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CGP") %>% 
   dplyr::select(gs_name, entrez_gene) %>% filter(gs_name == "VERHAAK_GLIOBLASTOMA_MESENCHYMAL" | gs_name == "VERHAAK_GLIOBLASTOMA_PRONEURAL")
 
 phillips <- data.frame(gs_name = "PHILLIPS_MESENCHYMAL", entrez_gene = as.numeric(phillips_mes)) %>%   rbind(data.frame(gs_name = "PHILLIPS_PRONEURAL", entrez_gene = as.numeric(phillips_pn)))
-sets.gsea1 <- rbind(gene.sets1, phillips)
+sets.gsea1 <- rbind(sets.gsea1, phillips)
+
+phillips_sig <-  data.frame(gs_name = "PHILLIPS_PRONEURAL_SIG",
+                           entrez_gene = as.numeric(mapIds(org.Hs.eg.db, phillips_pn_sig, 'ENTREZID', 'SYMBOL'))) %>% 
+  rbind(data.frame(gs_name = "PHILLIPS_MESENCHYMAL_SIG",
+                           entrez_gene = as.numeric(mapIds(org.Hs.eg.db, phillips_mes_sig, 'ENTREZID', 'SYMBOL')))) %>%
+  filter(!is.na(entrez_gene))
+
+sets.gsea1 <- rbind(sets.gsea1, phillips_sig)
+
+neftel <- data.frame(gs_name = "NEFTEL_MES1", entrez_gene = as.numeric(neftel.mes1)) %>% 
+  rbind(data.frame(gs_name = "NEFTEL_MES2", entrez_gene = as.numeric(neftel.mes2))) %>% 
+  rbind(data.frame(gs_name = "NEFTEL_OPC", entrez_gene = as.numeric(neftel.opc)))
+sets.gsea1 <- rbind(sets.gsea1, neftel)
 
 TMZ.ranks <- TMZ.degenes$logFC
 names(TMZ.ranks) <- TMZ.degenes$ID
@@ -2605,49 +2855,20 @@ em <- GSEA(TMZ.ranks, TERM2GENE = sets.gsea1, pvalueCutoff = 1)
 head(em)
 
 
-gseaplot(em, geneSetID = 1, by = "runningScore", 
-         title = bquote(paste(.(em$Description[1]), ": ", "TMZ")))+
-  annotation_custom(grobTree(textGrob(bquote(atop(paste("NES: ", .(em$NES[1] %>% round(2))), 
-                                       paste("p-value: ", .(em$pvalue[1] %>% round(4))))), 
-                           x=0.7,  y=0.8, hjust=0,
-  gp=gpar(col="red", fontsize=8))))+
-  plot_theme
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_1_TMZ.svg")
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_1_TMZ.png", width = 4, height = 2, units = "in")
-
-
-gseaplot(em, geneSetID = 2, by = "runningScore", 
-         title = bquote(paste(.(em$Description[2]), ": ", "TMZ")))+
-  annotation_custom(grobTree(textGrob(bquote(atop(paste("NES: ", .(em$NES[2] %>% round(2))), 
-                                       paste("p-value: ", .(em$pvalue[2] %>% round(4))))), 
-                           x=0.7,  y=0.8, hjust=0,
-  gp=gpar(col="red", fontsize=8))))+
-  plot_theme
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_2_TMZ.svg")
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_2_TMZ.png", width = 4, height = 2, units = "in")
-
-
-gseaplot(em, geneSetID = 3, by = "runningScore", 
-         title = bquote(paste(.(em$Description[3]), ": ", "TMZ")))+
-  annotation_custom(grobTree(textGrob(bquote(atop(paste("NES: ", .(em$NES[3] %>% round(2))), 
-                                       paste("p-value: ", .(em$pvalue[3] %>% round(4))))), 
-                           x=0.7,  y=0.8, hjust=0,
-  gp=gpar(col="red", fontsize=8))))+
-  plot_theme
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_3_TMZ.svg")
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_3_TMZ.png", width = 4, height = 2, units = "in")
-
-
-gseaplot(em, geneSetID = 4, by = "runningScore", 
-         title = bquote(paste(.(em$Description[4]), ": ", "TMZ")))+
-  annotation_custom(grobTree(textGrob(bquote(atop(paste("NES: ", .(em$NES[4] %>% round(2))), 
-                                       paste("p-value: ", .(em$pvalue[4] %>% round(4))))), 
-                           x=0.7,  y=0.8, hjust=0,
-  gp=gpar(col="red", fontsize=8))))+
-  plot_theme
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_4_TMZ.svg")
-ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_4_TMZ.png", width = 4, height = 2, units = "in")
-
+for(i in 1:length(em$Description)){
+  print(
+    gseaplot(em, geneSetID = i, by = "runningScore", 
+             title = bquote(paste(.(em$Description[i]), ": TMZ")))+
+      annotation_custom(grobTree(textGrob(bquote(atop(paste("NES: ", .(em$NES[i] %>% round(2))), 
+                                                      paste("p-value: ", .(em$pvalue[i] %>% round(4))))), 
+                                          x=0.7,  y=0.8, hjust=0,
+                                          gp=gpar(col="red", fontsize=8))))+
+      plot_theme
+  )
+  save_loc <- paste0("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/NES_", i, "_TMZ")
+  ggsave(paste0(save_loc, ".svg"))
+  ggsave(paste0(save_loc, ".png"), width = 4, height = 2, units = "in")
+}
 
 ```
 
@@ -3804,23 +4025,85 @@ pg1
 ```{r}
 #generating upset plots for Verhaak, Phillips, and Hallmark TGFb, TNFa, Hypoxia gene sets
 library(ggupset)
-pathway_genes <- data.frame(Pathway = "Verhaak MES", gene = unlist(verhaak.mes)) %>% 
-  rbind(data.frame(Pathway = "Verhaak PN", gene = unlist(verhaak.pn))) %>% 
-  rbind(data.frame(Pathway = "Phillips MES", gene = unlist(phillips_mes))) %>% 
-  rbind(data.frame(Pathway = "Phillips PN", gene = unlist(phillips_pn))) %>% 
-  rbind(data.frame(Pathway = "Segerman", gene = unlist(segerman_mes))) %>% 
-  rbind(data.frame(Pathway = "Hallmark TGFb", gene = unlist(hall.tgfb))) %>% 
-  rbind(data.frame(Pathway = "Hallmark TNFa", gene = unlist(hall.tnfa)))
 
-pathway_genes <- pathway_genes %>% group_by(Pathway) %>% distinct(gene)
+upset_paths <- c("VERHAAK_GLIOBLASTOMA_MESENCHYMAL", "VERHAAK_GLIOBLASTOMA_PRONEURAL", "HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_HYPOXIA")
 
-pathway_member <- pathway_genes %>% group_by(gene) %>% summarise(Pathways = list(Pathway))
-# pathway_member
+pathway_genes <- msigdbr(species = "Homo sapiens") %>% 
+  dplyr::select(gs_name, gene_symbol) %>% filter(gs_name %in% upset_paths)
 
-pathway_member %>% ggplot(aes(x = Pathways))+
+phillips_mes_sig <- read_excel("mmc4.xls", sheet = "MES") %>% filter(`Signature gene` == "x") %>% distinct(`Gene Symbol`) %>% pull(`Gene Symbol`) 
+
+phillips_pn_sig <- read_excel("mmc4.xls", sheet = "PN") %>% filter(`Signature gene` == "x") %>% distinct(`Gene Symbol`) %>% pull(`Gene Symbol`) %>% gsub("C20orf42", "FERMT1", .) #have to change the C20orf42 to its gene name for correct upset plot
+
+# neftel_mes1 <- gene_sets5 %>% pull(MESlike1)
+# neftel_mes2 <- gene_sets5 %>% pull(MESlike2)
+# neftel_opc <- gene_sets5 %>% pull(OPClike)
+
+# pathway_genes <- pathway_genes %>% 
+#   rbind(data.frame(gs_name = "Phillips MES", gene_symbol = unlist(phillips_mes_sig))) %>% 
+#   rbind(data.frame(gs_name = "Phillips PN", gene_symbol = unlist(phillips_pn_sig))) %>% 
+  # rbind(data.frame(gs_name = "Neftel MES-like 1", gene_symbol = unlist(neftel_mes1))) %>% 
+  # rbind(data.frame(gs_name = "Neftel MES-like 2", gene_symbol = unlist(neftel_mes2))) %>% 
+  # rbind(data.frame(gs_name = "Neftel OPC-like", gene_symbol = unlist(neftel_opc))) 
+
+pathway_genes <- pathway_genes %>% group_by(gs_name) %>% distinct(gene_symbol)
+
+pathway_member <- pathway_genes %>% group_by(gene_symbol) %>% summarise(gs_name = list(gs_name))
+
+
+upset1 <- pathway_member %>% ggplot(aes(x = gs_name))+
   geom_bar()+
   scale_x_upset(order_by = "degree")+
   geom_text(stat = 'count', aes(label = after_stat(count)), vjust = -1)+
-  scale_y_continuous(limits = c(0, 190))+
+  scale_y_continuous(limits = c(0, 210))+
   labs(x = element_blank(), y = "Unique Genes")
+upset1
+ggsave("upset-hallmark-verhaak.svg", plot = upset1, width = 7, height = 4, units = "in")
+ggsave("upset-hallmark-verhaak.png", plot = upset1, width = 7, height = 4, units = "in")
 ```
+
+```{r}
+#generating upset plot of Verhaak, Phillips, and Neftel PN/MES gene sets
+upset_paths <- c("VERHAAK_GLIOBLASTOMA_MESENCHYMAL", "VERHAAK_GLIOBLASTOMA_PRONEURAL")
+
+pathway_genes <- msigdbr(species = "Homo sapiens") %>% 
+  dplyr::select(gs_name, gene_symbol) %>% filter(gs_name %in% upset_paths)
+
+phillips_mes_sig <- read_excel("mmc4.xls", sheet = "MES") %>% filter(`Signature gene` == "x") %>% distinct(`Gene Symbol`) %>% pull(`Gene Symbol`) 
+
+phillips_pn_sig <- read_excel("mmc4.xls", sheet = "PN") %>% filter(`Signature gene` == "x") %>% distinct(`Gene Symbol`) %>% pull(`Gene Symbol`) %>% gsub("C20orf42", "FERMT1", .) #have to change the C20orf42 to its gene name for correct upset plot
+
+neftel_mes1 <- gene_sets5 %>% pull(MESlike1)
+neftel_mes2 <- gene_sets5 %>% pull(MESlike2)
+neftel_opc <- gene_sets5 %>% pull(OPClike)
+
+pathway_genes <- pathway_genes %>% 
+  rbind(data.frame(gs_name = "Phillips MES", gene_symbol = unlist(phillips_mes_sig))) %>% 
+  rbind(data.frame(gs_name = "Phillips PN", gene_symbol = unlist(phillips_pn_sig))) %>% 
+  rbind(data.frame(gs_name = "Neftel MES-like 1", gene_symbol = unlist(neftel_mes1))) %>% 
+  rbind(data.frame(gs_name = "Neftel MES-like 2", gene_symbol = unlist(neftel_mes2))) %>% 
+  rbind(data.frame(gs_name = "Neftel OPC-like", gene_symbol = unlist(neftel_opc))) 
+
+pathway_genes <- pathway_genes %>% group_by(gs_name) %>% distinct(gene_symbol)
+
+pathway_member <- pathway_genes %>% group_by(gene_symbol) %>% summarise(gs_name = list(gs_name))
+
+
+upset2 <- pathway_member %>% ggplot(aes(x = gs_name))+
+  geom_bar()+
+  scale_x_upset(order_by = "degree")+
+  geom_text(stat = 'count', aes(label = after_stat(count)), vjust = -1)+
+  scale_y_continuous(limits = c(0, 220))+
+  labs(x = element_blank(), y = "Unique Genes")
+upset2
+ggsave("upset-pmt-sets.svg", width = 7, height = 4, units = "in", plot = upset2)
+ggsave("upset-pmt-sets.png", width = 7, height = 4, units = "in", plot = upset2)
+
+semi_join(
+  data.frame(dplyr::select(gene_sets5, MESlike1)),
+  data.frame(dplyr::select(gene_sets5, MESlike2)),
+  by = c("MESlike1" = "MESlike2")
+)
+
+```
+

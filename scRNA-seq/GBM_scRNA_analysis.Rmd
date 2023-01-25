@@ -382,7 +382,7 @@ embedding2$layout %>%
   geom_point()+
   scale_color_viridis(option = "B")
 
-grps.sub %>% as.data.frame() %>% count(cluster)
+# grps.sub %>% as.data.frame() %>% count(cluster)
 ```
 ##clustering comparison
 ```{r}
@@ -975,8 +975,8 @@ ggbetweenstats(data = chk2.mat,
 ```{r}
 library(ggstatsplot)
 
-p1 <- c("HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_HYPOXIA")
-g1 <- c("FADD", "PARP1")
+p1 <- c("HALLMARK_TNFA_SIGNALING_VIA_NFKB")
+g1 <- c("PPP2R5E")
 
 gsva.sub <- gsva_res.df.t %>% dplyr::select(p1) %>% 
   rownames_to_column(var = "sample")
@@ -997,7 +997,8 @@ for(path in p1){
       g1.mat %>% 
         filter(!!sym(gene)>0) %>% 
       ggscatterstats(x = !!sym(path),
-                     y = !!sym(gene))
+                     y = !!sym(gene),
+                     ggplot.component = list(scale_x_log10(), scale_y_log10()))
     )
   }
 }
@@ -1037,41 +1038,61 @@ gsva.res.subtype %>%
           axis.text.y=element_text(size=7))
 ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/scRNA_GSVA_boxplot.svg", width = 4, height = 3)
 
+gsva.res.subtype %>% 
+  filter(pathway %in% path.to.plot) %>% 
+  ggplot(aes(x = subtype, y = score, color = pathway))+
+  geom_violin(aes(alpha = subtype, fill = pathway))+
+  geom_boxplot(width = 0.4, outlier.shape = NA)+
+  # geom_beeswarm(aes(shape = "."))+
+  facet_wrap(vars(pathway), nrow = 1, scales = "free_y")+
+  theme_cowplot()+
+  theme(legend.position = "none")+
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))+
+  labs(y = "GSVA Score", x = element_blank())+
+  scale_color_manual(values = c("darkred", "darkgreen", "darkblue"))+
+  scale_alpha_discrete(range = c(0.5, 1))+
+  theme(text=element_text(size=7), axis.text.x=element_text(size=7),
+          axis.text.y=element_text(size=7))
+ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/scRNA_GSVA_violin.svg", width = 4, height = 3)
+
 #STATS PLOTS
 for(p in path.to.plot){
   print(
   gsva.res.subtype %>%
     filter(pathway == p) %>%
-      ggbetweenstats(x = "subtype", y = "score")+
+      ggbetweenstats(x = "subtype", y = "score", type = "np")+
     labs(title = p)
 )
 }
+```
+
+```{r}
 
 path.to.plot2 <- c("HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_HYPOXIA", "VERHAAK_GLIOBLASTOMA_PRONEURAL")
 # SCATTER PLOTS
 for(p in path.to.plot2){
-  g.cor <- gsva_res.df %>% filter(gene.set == p|gene.set == "VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>% 
-    dplyr::select(-gene.set) %>% 
-    t() %>% 
+  g.cor <- gsva_res.df %>% filter(gene.set == p|gene.set == "VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>%
+    dplyr::select(-gene.set) %>%
+    t() %>%
     data.matrix()
-  
+
   corr1 <- cor.test(g.cor[,1], g.cor[,2], method = "pearson")
   corr <- as.character(round(corr1$estimate, digits = 3))
   pval <- as.character(formatC(signif(corr1$p.value, digits=3), digits=2, format="e"))
   statlab = paste0("R = ",corr,"\n p = ", pval)
-  
+
   max.y <- gsva_res.df.t %>% pull(p) %>% max
   max.x <- gsva_res.df.t %>% pull("VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>% max
   min.y <- gsva_res.df.t %>% pull(p) %>% min
   min.x <- gsva_res.df.t %>% pull("VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>% min
-  
+
   print(
-    gsva_res.df.t %>% 
-      dplyr::select(!!sym(p), "VERHAAK_GLIOBLASTOMA_MESENCHYMAL")%>% 
+    gsva_res.df.t %>%
+      dplyr::select(!!sym(p), "VERHAAK_GLIOBLASTOMA_MESENCHYMAL")%>%
       ggplot(aes(x = VERHAAK_GLIOBLASTOMA_MESENCHYMAL, y = !!sym(p)))+
       geom_point(size = 0.5)+
       geom_smooth(method = 'lm')+
-      geom_label(aes(x = max.x*(0.8), y = min.y*0.7, label = statlab), size = 1.5)+
+      geom_label(aes(x = max.x*(0.8), y = (max.y-min.y)*0.2+min.y, label = statlab), size = 1.5)+
       theme_cowplot()+
       theme(text=element_text(size=7), axis.text.x=element_text(size=7),
           axis.text.y=element_text(size=7))+
@@ -1079,7 +1100,151 @@ for(p in path.to.plot2){
   )
   save.loc <- "C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/"
   # ggsave(filename = paste0(save.loc, "scRNA_GSVA_biplot_", p, ".svg", sep=""), height = 3/2, width = 2)
-  # ggsave(filename = paste0(save.loc, "scRNA_GSVA_biplot_", p, ".png", sep=""), height = 3/2, width = 2, dpi = 600)
+  ggsave(filename = paste0(save.loc, "scRNA_GSVA_biplot_", p, ".png", sep=""), height = 3/2, width = 2, dpi = 600)
+}
+
+
+
+```
+
+#remove overlapping genes
+```{r}
+#what I am doing here is removing any genes that appear in Verhaak's mesenchymal gene set from the TNFa, TGFb, and hypoxia gene sets
+
+gene_sets_rel <- c("VERHAAK_GLIOBLASTOMA_MESENCHYMAL", 
+                   "VERHAAK_GLIOBLASTOMA_PRONEURAL", 
+                   "HALLMARK_TGF_BETA_SIGNALING", 
+                   "HALLMARK_TNFA_SIGNALING_VIA_NFKB", 
+                   "HALLMARK_HYPOXIA")
+
+gene_sets_ro <- msigdbr(species = "Homo sapiens") %>% 
+  # dplyr::select(gs_name, entrez_gene) %>% 
+  filter(gs_name %in% gene_sets_rel)
+
+g_mes <- gene_sets_ro %>% filter(gs_name == "VERHAAK_GLIOBLASTOMA_MESENCHYMAL")
+g_pn <- gene_sets_ro %>% filter(gs_name == "VERHAAK_GLIOBLASTOMA_PRONEURAL")
+g_tgfb <- gene_sets_ro %>% filter(gs_name == "HALLMARK_TGF_BETA_SIGNALING")
+g_tnfa <- gene_sets_ro %>% filter(gs_name == "HALLMARK_TNFA_SIGNALING_VIA_NFKB")
+g_hyp <- gene_sets_ro %>% filter(gs_name == "HALLMARK_HYPOXIA")
+
+g_tgfb <- g_tgfb %>% filter(entrez_gene %ni% g_mes$entrez_gene)
+g_tnfa <- g_tnfa %>% filter(entrez_gene %ni% g_mes$entrez_gene)
+g_hyp <- g_hyp %>% filter(entrez_gene %ni% g_mes$entrez_gene)
+
+
+g1 <- rbind(g_mes, g_pn) %>% rbind(g_tgfb) %>% rbind(g_tnfa) %>% rbind(g_hyp) %>% 
+  split(x = .$gene_symbol, f = .$gs_name)
+
+
+```
+##GSVA again
+```{r}
+data_for_gsva <- exp.symbol[,-1] %>% data.matrix()
+rownames(data_for_gsva) <- exp.symbol$GeneID
+
+force_calculate_gsva <- T
+if(!file.exists("gsva_results_2.rds") | isTRUE(force_calculate_gsva)){
+  gsva_res2 <- gsva(
+    data_for_gsva, 
+    g1, verbose = F, # Change which gene sets are run
+    method = "zscore", 
+    kcdf = "Gaussian", 
+    min.sz = 10, # Minimum number of genes required to include a gene set
+    parallel.sz=detectCores()#-1
+    )
+  ## Save GSVA results for speed:
+  saveRDS(gsva_res2, file = "gsva_results_2.rds")
+  
+} else if(file.exists("gsva_results_2.rds") & !exists("gsva_res2")){ 
+  ## Load GSVA results, if they haven't been loaded/calculated already:
+  gsva_res2 <- readRDS("gsva_results_2.rds") 
+}
+## Build data frame versions of GSVA results:
+gsva_res.df <- gsva_res2 %>% data.frame(gene.set=rownames(.), .) # Convert to data frame
+gsva_res.df.t <- gsva_res2 %>% t() %>% data.frame(ID=rownames(.), .)
+rownames(gsva_res.df) <- gsva_res.df$gene.set
+
+# gsva_res.df.t$ID <- gsva_res.df.t$ID %>% gsub("-", ".", .)
+
+
+gsva_res_filt <- gsva_res.df.t %>% filter(ID %in% samples.mes | ID %in% samples.pn)
+```
+
+##boxplots
+```{r}
+
+gsva.res.subtype <- gsva_res.df.t %>% filter(ID %in% samples.mes | ID %in% samples.pn) %>% 
+  pivot_longer(cols = -ID, names_to = "pathway", values_to = "score") %>% 
+  mutate(subtype = if_else(ID %in% samples.mes, "MES", "PN"))
+
+path.to.plot <- c("HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_HYPOXIA")
+
+gsva.res.subtype$pathway <- gsva.res.subtype$pathway %>% factor(path.to.plot)
+gsva.res.subtype$subtype <- gsva.res.subtype$subtype %>% factor(c("PN", "MES"))
+
+
+gsva.res.subtype %>% 
+  filter(pathway %in% path.to.plot) %>% 
+  ggplot(aes(x = subtype, y = score, color = pathway))+
+  geom_violin(aes(alpha = subtype, fill = pathway))+
+  geom_boxplot(width = 0.4, outlier.shape = NA)+
+  # geom_beeswarm()+
+  facet_wrap(vars(pathway), nrow = 1, scales = "free_y")+
+  theme_cowplot()+
+  theme(legend.position = "none")+
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))+
+  labs(y = "GSVA Score", x = element_blank())+
+  scale_color_manual(values = c("darkred", "darkgreen", "darkblue"))+
+  scale_alpha_discrete(range = c(0.5, 1))+
+  theme(text=element_text(size=7), axis.text.x=element_text(size=7),
+          axis.text.y=element_text(size=7))
+ggsave("C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/extra/scRNA_GSVA_violin.svg", width = 4, height = 3)
+
+for(p in path.to.plot){
+  print(
+  gsva.res.subtype %>% 
+    filter(pathway == p) %>% 
+      ggbetweenstats(x = "subtype", y = "score", type = "np")+
+    labs(title = p)
+)
+}
+```
+
+##linear correlations
+```{r}
+path.to.plot2 <- c("HALLMARK_TGF_BETA_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_HYPOXIA", "VERHAAK_GLIOBLASTOMA_PRONEURAL")
+# SCATTER PLOTS
+for(p in path.to.plot2){
+  g.cor <- gsva_res.df %>% filter(gene.set == p|gene.set == "VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>%
+    dplyr::select(-gene.set) %>%
+    t() %>%
+    data.matrix()
+
+  corr1 <- cor.test(g.cor[,1], g.cor[,2], method = "pearson")
+  corr <- as.character(round(corr1$estimate, digits = 3))
+  pval <- as.character(formatC(signif(corr1$p.value, digits=3), digits=2, format="e"))
+  statlab = paste0("R = ",corr,"\n p = ", pval)
+
+  max.y <- gsva_res.df.t %>% pull(p) %>% max
+  max.x <- gsva_res.df.t %>% pull("VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>% max
+  min.y <- gsva_res.df.t %>% pull(p) %>% min
+  min.x <- gsva_res.df.t %>% pull("VERHAAK_GLIOBLASTOMA_MESENCHYMAL") %>% min
+
+  print(
+    gsva_res.df.t %>%
+      dplyr::select(!!sym(p), "VERHAAK_GLIOBLASTOMA_MESENCHYMAL")%>%
+      ggplot(aes(x = VERHAAK_GLIOBLASTOMA_MESENCHYMAL, y = !!sym(p)))+
+      geom_point(size = 0.5)+
+      geom_smooth(method = 'lm')+
+      geom_label(aes(x = max.x*(0.8), y = (max.y-min.y)*0.2+min.y, label = statlab), size = 1.5)+
+      theme_cowplot()+
+      theme(text=element_text(size=7), axis.text.x=element_text(size=7),
+          axis.text.y=element_text(size=7))+
+      scale_y_continuous(limits = c(min.y, max.y))
+  )
+  save.loc <- "C:/Users/willh/Documents/Lab/GBM PMT/PMT manuscript/extra/"
+  # ggsave(filename = paste0(save.loc, "scRNA_GSVA_biplot_", p, ".svg", sep=""), height = 3/2, width = 2)
+  ggsave(filename = paste0(save.loc, "scRNA_GSVA_biplot_", p, ".png", sep=""), height = 3/2, width = 2, dpi = 600)
 }
 
 
