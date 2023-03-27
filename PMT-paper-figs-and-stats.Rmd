@@ -1,0 +1,638 @@
+#load packages
+```{r}
+library(tidyverse)
+library(readxl)
+library(cowplot)
+library(ggpubr)
+library(ggokabeito)
+```
+
+```{r Clear environment}
+### Clear R workspace:
+rm(list=ls())
+```
+
+```{r Check and set working directory}
+### Check current working directory:
+cwd <- getwd()
+cwd
+### Set working directory:
+setwd(cwd) # Set current working directory to location of this notebook for easier handling and saving of data associated with the notebook
+```
+#define funs
+```{r}
+# define functions
+data_summary <- function(data, varname, groupnames){
+  require(plyr)
+  summary_func <- function(x, col){
+    c(mean = mean(x[[col]], na.rm=TRUE),
+      sd = sd(x[[col]], na.rm=TRUE),
+      sem = sd(x[[col]], na.rm=TRUE)/sqrt(length(x)))
+  }
+  data_sum<-ddply(data, groupnames, .fun=summary_func,
+                  varname)
+#  data_sum <- rename(data_sum, c("mean" = varname))
+ return(data_sum)
+}
+
+
+`%!in%` <- Negate(`%in%`)
+
+
+plot_theme <- theme(text = element_text(size = 8), legend.text = element_text(size = 8))
+
+```
+#make figures
+##G559 TGFb, TNFa RTqPCR data
+```{r}
+
+colors1 <- c("#555555", "darkred", "darkblue", "darkgreen")
+dat <- read_excel("../06-13-22 G559 TGFb TNFa RTqPCR.xlsx", sheet = "Sheet3")
+
+dat2 <- dat %>% pivot_longer(cols = -treat1, names_to = "gene", values_to = "FC") %>% 
+  group_by(gene) %>%
+  mutate(
+    FC = FC/max(FC)
+  ) %>% 
+  filter(gene != "SERPINE1")
+
+dat2$treat1 <- dat2$treat1 %>% gsub("Unt", "Untreated", .) %>% 
+  factor(c("Untreated", "TGFb", "TNFa", "TGFb+TNFa"))
+dat2$gene <- dat2$gene %>% factor(c("FN1", "CD44", "CHI3L1", "COL1A2", "OLIG2"))
+
+ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  theme(axis.text.x = element_text(face = "italic"))+
+  # scale_fill_manual(values = colors1, name = element_blank())+
+  scale_fill_okabe_ito()+
+  plot_theme
+# ggsave("G559_TGFb_TNFa_export.svg", width = 4, height = 2.5, units = "in")
+ggsave("G559_TGFb_TNFa_export_cb.svg", width = 4, height = 2.5, units = "in")
+
+
+#plot as faceted barplot to help with readability
+dat2a <- dat2 %>% group_by(treat1, gene) %>% 
+  summarise(avg = mean(FC), sd = sd(FC)) %>% ungroup()
+dat2a$treat1 <- dat2a$treat1 %>% gsub("TGFb", "TGF\u03B2", .) %>% gsub("TNFa", "TNF\u03B1", .) %>% 
+  factor(c("Untreated", "TGF\u03B2", "TNF\u03B1", "TGF\u03B2+TNF\u03B1"))
+
+ggplot(dat2a, aes(x = treat1, y = avg, fill = treat1))+
+  geom_bar(stat = "identity", position = position_dodge(0.8))+
+  geom_errorbar(aes(ymax = avg+sd, ymin = avg-sd), width = 0.1)+
+  facet_wrap(~gene, nrow = 1)+
+  scale_fill_manual(values = colors1, name = element_blank())+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  scale_y_continuous(expand = c(0,0), limits = c(0,1.2), breaks = c(0,0.2, 0.4, 0.6, 0.8, 1))+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+        legend.position = "none",
+        strip.text = element_text(face = "italic"))
+ggsave("G559_TGFb_TNFa_export_facet.svg", width = 6, height = 3.5, units = "in")
+
+##calculating statistical significance using one-way ANOVA + Tukey post-hoc
+anova1 <- aov(FN1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(CD44 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(CHI3L1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(SERPINE1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+
+anova1 <- aov(COL1A2 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(OLIG2 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+#summarizing and plotting data
+# genes <- colnames(dat)[-1]
+# 
+# dat1 <- data.frame()
+# for (i in genes){
+#   dat_temp <- data_summary(dat, varname = i , groupnames = "treat1") %>% mutate(gene = i) %>% mutate(max_val = max(mean))
+#   dat_temp <- dat_temp %>% mutate(mean_norm = mean/max_val, sd_norm = sd/max_val)
+#   dat1 <- dat1 %>% bind_rows(dat_temp)
+# }
+# 
+# dat1 <- dat1 %>% transmute(treat1 = treat1, mean = mean_norm, sd = sd_norm, gene = gene)
+# 
+# 
+# dat1$treat1 <- dat1$treat1 %>% factor(c("Unt", "TGFb", "TNFa", "TGFb+TNFa"))
+# dat1$gene <- dat1$gene %>% factor(c("FN1", "CD44", "CHI3L1", "COL1A2", "SERPINE1", "OLIG2"))
+# 
+# dodge <- position_dodge(width = 0.9)
+# ggplot(dat1, aes(x = gene, y = mean, fill = treat1))+
+#   geom_bar(stat = "identity", position = dodge, color = "black")+
+#   geom_errorbar(stat = "identity", position = dodge, aes(ymax = mean+sd, ymin = mean-sd), width = 0.5)+
+#   plot_theme+
+#   scale_y_continuous(expand = c(0,0), limits = c(0, 1.5))+
+#   labs(y = "Normalized Fold Change", x = element_blank())+
+#   scale_fill_manual(values = c("#222222", "darkred", "darkblue", "darkgreen"))
+
+
+
+```
+##G816 TGFb, TNFa RTqPCR data (old)
+```{r eval=FALSE, include=FALSE}
+dat <- read_excel("../06-01-22 G816 TGFb TNFa RTqPCR.xlsx", sheet = "Sheet3")
+
+dat2 <- dat %>% pivot_longer(cols = -treat1, names_to = "gene", values_to = "FC") %>% 
+  group_by(gene) %>%
+  mutate(
+    FC = FC/max(FC)
+  ) %>% 
+  filter(gene != "SERPINE1")
+
+dat2$treat1 <- dat2$treat1 %>% gsub("Unt", "Untreated", .) %>% factor(c("Untreated", "TGFb", "TNFa", "TGFb+TNFa"))
+dat2$gene <- dat2$gene %>% factor(c("FN1", "CD44", "CHI3L1", "COL1A2", "OLIG2"))
+
+ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  theme(axis.text.x = element_text(face = "italic"))+
+  scale_fill_manual(values = colors1, name = element_blank())+
+  plot_theme
+ggsave("G816_TGFb_TNFa_export.svg", width = 4, height = 2.5, units = "in")
+
+#statistics
+anova1 <- aov(FN1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(CD44 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(CHI3L1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(SERPINE1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+
+anova1 <- aov(COL1A2 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(OLIG2 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+
+
+```
+
+##G816 TGFb, TNFa RTqPCR data (new)
+```{r}
+dat <- read_excel("../09-12-22 G816 TGFb TNFa RTqPCR.xlsx", sheet = "Sheet3")
+
+dat2 <- dat %>% pivot_longer(cols = -treat1, names_to = "gene", values_to = "FC") %>% 
+  group_by(gene) %>%
+  mutate(
+    FC = FC/max(FC)
+  ) %>% 
+  filter(gene != "SERPINE1")
+
+dat2$treat1 <- dat2$treat1 %>% gsub("Unt", "Untreated", .) %>% factor(c("Untreated", "TGFb", "TNFa", "TGFb+TNFa"))
+dat2$gene <- dat2$gene %>% factor(c("FN1", "CD44", "CHI3L1", "COL1A2", "OLIG2"))
+
+ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  theme(axis.text.x = element_text(face = "italic"))+
+  scale_fill_manual(values = colors1, name = element_blank())+
+  plot_theme
+ggsave("G816_TGFb_TNFa_export_new.svg", width = 4, height = 2.5, units = "in")
+
+#plot as faceted barplot to help with readability
+dat2a <- dat2 %>% group_by(treat1, gene) %>% 
+  summarise(avg = mean(FC), sd = sd(FC)) %>% ungroup()
+dat2a$treat1 <- dat2a$treat1 %>% gsub("TGFb", "TGF\u03B2", .) %>% gsub("TNFa", "TNF\u03B1", .) %>% 
+  factor(c("Untreated", "TGF\u03B2", "TNF\u03B1", "TGF\u03B2+TNF\u03B1"))
+
+ggplot(dat2a, aes(x = treat1, y = avg, fill = treat1))+
+  geom_bar(stat = "identity", position = position_dodge(0.8))+
+  geom_errorbar(aes(ymax = avg+sd, ymin = avg-sd), width = 0.1)+
+  facet_wrap(~gene, nrow = 1)+
+  scale_fill_manual(values = colors1, name = element_blank())+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  scale_y_continuous(expand = c(0,0), limits = c(0,1.2), breaks = c(0,0.2, 0.4, 0.6, 0.8, 1))+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+        legend.position = "none",
+        strip.text = element_text(face = "italic"))
+ggsave("G816_TGFb_TNFa_export_facet.svg", width = 6, height = 3.5, units = "in")
+
+
+
+#statistics
+anova1 <- aov(FN1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(CD44 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(CHI3L1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(SERPINE1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+
+anova1 <- aov(COL1A2 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(OLIG2 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+
+```
+##G464 IL8, GROa data
+```{r}
+
+dat <- read_excel("../06-06-22 G464 IL8 GROa RTqPCR.xlsx", sheet = "Sheet2")
+dat2 <- dat %>% pivot_longer(cols = -treat1, names_to = "gene", values_to = "FC") %>% 
+  group_by(gene) %>%
+  mutate(
+    FC = FC/max(FC)
+  )
+
+dat2$treat1 <- dat2$treat1 %>% gsub("Unt", "Untreated", .) %>% factor(c("Untreated", "IL8", "GROa"))
+dat2$gene <- dat2$gene %>% factor(c("FN1", "CD44", "CHI3L1", "COL1A2", "SERPINE1", "OLIG2"))
+
+ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  theme(axis.text.x = element_text(face = "italic"))+
+  scale_fill_manual(values = c("#555555", "darkred", "darkblue"), name = element_blank())+
+  plot_theme
+ggsave("G464_IL8_GROa_export.svg", width = 2.5, height = 2.5, units = "in")
+
+anova1 <- aov(FN1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(CD44 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+anova1 <- aov(CHI3L1 ~ treat1, data = dat)
+summary(anova1)
+hsd1 <- TukeyHSD(anova1)
+hsd1
+
+#summarizing and plotting data
+# genes <- colnames(dat)[-1]
+# 
+# dat1 <- data.frame()
+# for (i in genes){
+#   dat_temp <- data_summary(dat, varname = i , groupnames = "treat1") %>% mutate(gene = i) %>% mutate(max_val = max(mean))
+#   dat_temp <- dat_temp %>% mutate(mean_norm = mean/max_val, sd_norm = sd/max_val)
+#   dat1 <- dat1 %>% bind_rows(dat_temp)
+# }
+# 
+# dat1 <- dat1 %>% transmute(treat1 = treat1, mean = mean_norm, sd = sd_norm, gene = gene)
+# 
+# 
+# dat1$treat1 <- dat1$treat1 %>% factor(c("Unt", "IL8", "GROa"))
+# dat1$gene <- dat1$gene %>% factor(c("FN1", "CD44", "CHI3L1"))
+# 
+# dodge <- position_dodge(width = 0.9)
+# ggplot(dat1, aes(x = gene, y = mean, fill = treat1))+
+#   geom_bar(stat = "identity", position = dodge, color = "black")+
+#   geom_errorbar(stat = "identity", position = dodge, aes(ymax = mean+sd, ymin = mean-sd), width = 0.5)+
+#   plot_theme+
+#   scale_y_continuous(expand = c(0,0), limits = c(0, 2))+
+#   labs(y = "Normalized Fold Change", x = element_blank())+
+#   scale_fill_manual(values = c("#222222", "darkred", "darkblue", "darkgreen"))
+
+
+
+```
+##G816 TMZ (old)
+```{r}
+
+
+dat <- read_excel("../06-02-22 G816 TMZ RTqPCR.xlsx", sheet = "Sheet2")
+
+dat2 <- dat %>% pivot_longer(cols = -treat1, names_to = "gene", values_to = "FC") %>% 
+  na.omit() %>% 
+  group_by(gene) %>%
+  mutate(
+    FC = FC/max(FC)
+  )
+
+dat2$treat1 <- dat2$treat1 %>% factor(c("DMSO", "TMZ"))
+dat2$gene <- dat2$gene %>% factor(c("FN1", "CD44", "CHI3L1", "SERPINE1", "OLIG2"))
+
+ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = element_blank())+
+  theme(axis.text.x = element_text(face = "italic"))+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  plot_theme
+ggsave("G816_TMZ_export.svg", width = 3, height = 2.5, units = "in")
+
+
+
+```
+
+##G816 TMZ (new)
+```{r}
+
+
+dat <- read_excel("../09-13-22 G816 TMZ RTqPCR.xlsx", sheet = "Sheet2")
+
+dat2 <- dat %>% pivot_longer(cols = -treat1, names_to = "gene", values_to = "FC") %>% 
+  na.omit() %>% 
+  group_by(gene) %>%
+  mutate(
+    FC = FC/max(FC)
+  ) %>% 
+  filter(gene != "SERPINE1")
+
+dat2$treat1 <- dat2$treat1 %>% factor(c("DMSO", "TMZ"))
+dat2$gene <- dat2$gene %>% factor(c("FN1", "CD44", "CHI3L1", "COL1A2","OLIG2"))
+
+ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = element_blank())+
+  theme(axis.text.x = element_text(face = "italic"))+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  plot_theme
+ggsave("G816_TMZ_export_2.svg", width = 3, height = 2.5, units = "in")
+
+#plot as faceted barplot to help with readability
+dat2a <- dat2 %>% group_by(treat1, gene) %>% 
+  summarise(avg = mean(FC), sd = sd(FC)) %>% ungroup()
+
+
+ggplot(dat2a, aes(x = treat1, y = avg, fill = treat1))+
+  geom_bar(stat = "identity", position = position_dodge(0.8))+
+  geom_errorbar(aes(ymax = avg+sd, ymin = avg-sd), width = 0.1)+
+  facet_wrap(~gene, nrow = 1)+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = element_blank())+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  scale_y_continuous(expand = c(0,0), limits = c(0,1.2), breaks = c(0,0.2, 0.4, 0.6, 0.8, 1))+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+        legend.position = "none",
+        strip.text = element_text(face = "italic"))
+ggsave("G816_TMZ_export_facet.svg", width = 5, height = 3.5, units = "in")
+
+```
+
+##G559 TMZ
+```{r}
+
+
+dat <- read_excel("../06-14-22 G559 TMZ RTqPCR.xlsx", sheet = "Sheet2")
+
+dat2 <- dat %>% pivot_longer(cols = -treat1, names_to = "gene", values_to = "FC") %>% 
+  na.omit() %>% 
+  group_by(gene) %>%
+  mutate(
+    FC = FC/max(FC)
+  ) %>% 
+  filter(gene != "SERPINE1")
+
+dat2$treat1 <- dat2$treat1 %>% factor(c("DMSO", "TMZ"))
+dat2$gene <- dat2$gene %>% factor(c("FN1", "CD44", "CHI3L1", "COL1A2", "OLIG2"))
+
+ggbarplot(dat2, x = "gene", y = "FC", add = "mean_se", fill = "treat1", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = element_blank())+
+  theme(axis.text.x = element_text(face = "italic"))+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  plot_theme
+ggsave("G559_TMZ_export.svg", width = 3, height = 2.5, units = "in")
+
+#plot as faceted barplot to help with readability
+dat2a <- dat2 %>% group_by(treat1, gene) %>% 
+  summarise(avg = mean(FC), sd = sd(FC)) %>% ungroup()
+
+ggplot(dat2a, aes(x = treat1, y = avg, fill = treat1))+
+  geom_bar(stat = "identity", position = position_dodge(0.8))+
+  geom_errorbar(aes(ymax = avg+sd, ymin = avg-sd), width = 0.1)+
+  facet_wrap(~gene, nrow = 1)+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = element_blank())+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  scale_y_continuous(expand = c(0,0), limits = c(0,1.2), breaks = c(0,0.2, 0.4, 0.6, 0.8, 1))+
+  theme_cowplot()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1), 
+        legend.position = "none",
+        strip.text = element_text(face = "italic"))
+ggsave("G559_TMZ_export_facet.svg", width = 5, height = 3.5, units = "in")
+# genes <- colnames(dat)[-1]
+# 
+# dat1 <- data.frame()
+# for (i in genes){
+#   dat_temp <- data_summary(dat, varname = i , groupnames = "treat1") %>% mutate(gene = i) %>% mutate(max_val = max(mean))
+#   dat_temp <- dat_temp %>% mutate(mean_norm = mean/max_val, sd_norm = sd/max_val)
+#   dat1 <- dat1 %>% bind_rows(dat_temp)
+# }
+# 
+# dat1 <- dat1 %>% transmute(treat1 = treat1, mean = mean_norm, sd = sd_norm, gene = gene)
+# 
+# 
+# dat1$treat1 <- dat1$treat1 %>% factor(c("DMSO", "TMZ"))
+# dat1$gene <- dat1$gene %>% factor(c("FN1", "CD44", "CHI3L1", "SERPINE1", "OLIG2"))
+# 
+# dodge <- position_dodge(width = 0.9)
+# ggplot(dat1, aes(x = gene, y = mean, fill = treat1))+
+#   geom_bar(stat = "identity", position = dodge, color = "black")+
+#   geom_errorbar(stat = "identity", position = dodge, aes(ymax = mean+sd, ymin = mean-sd), width = 0.5)+
+#   plot_theme+
+#   scale_y_continuous(expand = c(0,0), limits = c(0, 1.5))+
+#   labs(y = "Normalized Fold Change", x = element_blank())+
+#   scale_fill_manual(values = c("darkred", "darkblue"))
+
+
+
+
+```
+
+```{r eval=FALSE, include=FALSE} 
+##junk code don't run
+dat1 %>%
+  group_by(gene) %>%
+  mutate(
+    value = value/max(value),
+    # value = value/mean(value[treat1=="Unt"])),
+  ) %>% 
+  ggplot(aes(x=treat, y=value)) + 
+    stat_summary() + 
+    geom_col(aes(y=mean(value)))
+
+```
+##G464 CM
+```{r eval=FALSE, include=FALSE}
+dat <- read_excel("../11-18-19 G464 CM RTqPCR.xlsx", sheet = "Sheet3")
+
+dat1 <- dat %>% 
+  group_by(gene) %>%
+  mutate(
+    fold = fold/max(fold)
+  )
+dat1$treat <- dat1$treat %>% factor(c("PN", "MES"))
+
+ggbarplot(dat1, x = "gene", y = "fold", add = "mean_se", fill = "treat", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = "CM")+
+  theme(axis.text.x = element_text(face = "italic"))+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  plot_theme
+ggsave("G464_CM_export.svg", width = 3, height = 2.5, units = "in")
+
+#luminex data
+dat3 <- read_excel("../01-23-20 GIC Luminex results.xlsx", sheet = "PN-MES") %>%  # CM Luminex
+  pivot_longer(c(`CM-PN`, `CM-MES`), names_to = "CM", values_to = "conc")
+  
+dat3$CM <- dat3$CM %>% gsub("CM-", "", .) %>% factor(c("PN", "MES"))
+
+dat3 %>% 
+  arrange(ratio) %>% 
+  ggbarplot(x = "cytokine", y = "conc", fill = "CM", position = position_dodge(-0.8))+
+    scale_y_log10(expand = c(0,0))+
+    # stat_compare_means(comparisons = "FC", group.by = "gene")+
+    scale_fill_manual(values = c("darkred", "darkblue"))+
+    labs(x = element_blank(), y = "Protein Concentration (pg/ml)")+
+  coord_flip()+
+  plot_theme
+ggsave("CM_Luminex_export.svg", width = 4, height = 5, units = "in")
+
+
+```
+
+##G816 hypoxia
+```{r}
+dat <- read_excel("../08-15-22 G816 hypoxia RTqPCR.xlsx", sheet = "Sheet2")
+
+
+dat4 <- dat %>% dplyr::select(-GAPDH, -CHI3L1) %>% pivot_longer(cols = -O2, names_to = "gene", values_to = "FC") %>% 
+  group_by(gene) %>% 
+  mutate(FC = FC/max(FC))
+dat4$O2 <- dat4$O2 %>% factor(c("21%", "1%"))
+
+ggbarplot(dat4, x = "gene", y = "FC", add = "mean_se", fill = "O2", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 1, hjust = 1))+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = element_blank())+
+  plot_theme
+ggsave("G816_hypoxia_export.svg", width = 3, height = 2.5, units = "in")
+
+```
+
+##559 hypoxia
+```{r}
+dat <- read_excel("../08-16-22 G559 hypoxia RTqPCR.xlsx", sheet = "Sheet2")
+
+dat4 <- dat %>% dplyr::select(-GAPDH) %>% pivot_longer(cols = -O2, names_to = "gene", values_to = "FC") %>% 
+  group_by(gene) %>% 
+  mutate(FC = FC/max(FC))
+dat4$O2 <- dat4$O2 %>% factor(c("21%", "1%"))
+
+ggbarplot(dat4, x = "gene", y = "FC", add = "mean_se", fill = "O2", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 1, hjust = 1))+
+  scale_fill_manual(values = c("darkred", "darkblue"), name = element_blank())+
+  plot_theme
+ggsave("G559_hypoxia_export.svg", width = 3, height = 2.5, units = "in")
+
+
+```
+
+
+##KM - MES vs PN
+```{r eval=FALSE, include=FALSE}
+library(survival)
+
+tcga.patient <- read.delim("~/Lab/GBM PMT/TCGA/PMT/tcga_data/data_clinical_patient.txt", comment.char="#")
+tcga.sample <- read.delim("~/Lab/GBM PMT/TCGA/PMT/tcga_data/data_clinical_sample.txt", comment.char="#")
+
+tcga.data <- full_join(tcga.patient, tcga.sample, by = "PATIENT_ID") %>% 
+  filter(EXPRESSION_SUBTYPE %in% c("Mesenchymal", "Proneural", "Classical"))
+
+# OS_STATUS == "1:DECEASED" &
+fit1 <- survfit(Surv(tcga.data$OS_MONTHS, tcga.data$OS_STATUS=="1:DECEASED") ~ tcga.data$EXPRESSION_SUBTYPE)
+subtypes <- fit1$strata %>% names() %>% gsub("tcga.data\\$EXPRESSION_SUBTYPE=", "", .)
+
+plot(fit1, col = 1:length(subtypes), lwd=2, xlab = "Overall Survival Time (months)", ylab = "Survival")
+legend(80, 0.9, subtypes, col = 1:length(subtypes), lwd = 2, bty = "n")
+print(fit1)
+```
+
+##matrigel RTqPCR
+```{r}
+dat <- read_excel("../08-01-22 G816 TGFb TNFa sph mgl RTqPCR.xlsx", sheet = "Sheet3")
+
+dat5 <- dat %>% pivot_longer(cols = -c(plating, treat), values_to = "FC", names_to = "gene") %>% 
+  group_by(gene) %>% 
+  mutate(FC = FC/max(FC))
+
+dat5 <- dat5 %>% mutate(col1 = paste(plating, treat, sep = ": "))
+dat5$col1 <- dat5$col1 %>% factor(c("Spheres: Untreated", "Matrigel: Untreated", "Spheres: TGFb+TNFa", "Matrigel: TGFb+TNFa"))
+
+ggbarplot(dat5, x = "gene", y = "FC", add = "mean_se", fill = "col1", position = position_dodge(0.8))+
+  scale_y_continuous(expand = c(0,0), limits = c(0, 1.1))+
+  # stat_compare_means(comparisons = "FC", group.by = "gene")+
+  labs(x = element_blank(), y = "Normalized Fold Change")+
+  theme(axis.text.x = element_text(face = "italic", angle = 45, vjust = 1, hjust = 1))+
+  scale_fill_manual(values = c("red", "blue", "darkred", "darkblue"), name = element_blank())+
+  plot_theme
+ggsave("G816_matrigel_T+T_export.svg", width = 4, height = 2.5, units = "in")
+
+```
+

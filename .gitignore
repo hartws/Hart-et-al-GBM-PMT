@@ -72,3 +72,6 @@ TCGA/HiSeqV2_exon
 *.gz
 *.seg
 *.mtx
+.Rproj.user
+*.pper
+
