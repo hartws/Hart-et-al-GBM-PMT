@@ -1247,6 +1247,4 @@ for(p in path.to.plot2){
   ggsave(filename = paste0(save.loc, "scRNA_GSVA_biplot_", p, ".png", sep=""), height = 3/2, width = 2, dpi = 600)
 }
 
-
-
 ```

@@ -4021,7 +4021,8 @@ pg1
 ```
 
 
-#upset plot
+#upset plots
+##verhaak vs hallmarks
 ```{r}
 #generating upset plots for Verhaak, Phillips, and Hallmark TGFb, TNFa, Hypoxia gene sets
 library(ggupset)
@@ -4061,7 +4062,7 @@ upset1
 ggsave("upset-hallmark-verhaak.svg", plot = upset1, width = 7, height = 4, units = "in")
 ggsave("upset-hallmark-verhaak.png", plot = upset1, width = 7, height = 4, units = "in")
 ```
-
+##GBM subtyping systems
 ```{r}
 #generating upset plot of Verhaak, Phillips, and Neftel PN/MES gene sets
 upset_paths <- c("VERHAAK_GLIOBLASTOMA_MESENCHYMAL", "VERHAAK_GLIOBLASTOMA_PRONEURAL")

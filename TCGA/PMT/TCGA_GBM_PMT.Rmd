@@ -692,3 +692,36 @@ for(p in path.to.plot2){
 
 
 ```
+
+
+#other analysis
+```{r}
+library(ggstatsplot)
+
+rppa.dat <- rppa %>% data.frame()
+colnames(rppa.dat)
+
+
+ggscatterstats(data = rppa.dat, x = "c.Jun_pS73", y = "PTEN")
+ggscatterstats(data = rppa.dat, x = "c.Jun_pS73", y = "JNK_pT183_Y185")
+ggscatterstats(data = rppa.dat, x = "JNK_pT183_Y185", y = "PTEN")
+ggscatterstats(data = rppa.dat, x = "MAPK_pT202_Y204", y = "PTEN")
+
+```
+
+```{r}
+rna.data <- rna %>% rownames_to_column(var = "gene") %>% 
+  distinct(gene, .keep_all = T)
+rna.data$gene <- rna.data$gene %>% mapIds(org.Hs.eg.db, ., "SYMBOL", "ENTREZID")
+rna.data <- rna.data %>% filter(!is.na(gene)) %>% 
+  column_to_rownames(var = "gene") %>% 
+  t() %>% 
+  data.frame()
+
+ggscatterstats(data = rna.data, x = "PTEN", y = "JUN", marginal = F)
+ggscatterstats(data = rna.data, x = "FADD", y = "MYC", marginal = F)
+ggscatterstats(data = rna.data, x = "FADD", y = "CSNK1A1", marginal = F)
+
+
+```
+
