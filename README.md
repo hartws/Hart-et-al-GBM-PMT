@@ -2,7 +2,7 @@
 The repository for the manuscript Hart, et al, "Divergent transcriptomic signatures from putative mesenchymal stimuli in glioblastoma cells".
 
 ## Accessing data
-All RT-qPCRdata used in the generation of this manuscript is available at -----. RNA-seq data is available at -----. TCGA tumor data used to generate Figure 1 is available from cBioPortal. CPTAC data used to generate Figure 1 is avaliable from the NCI proteomic Data Commons. Single-cell RNA sequencing data from Neftel, et al. is available from the Broad Institute Single-Cell Portal.  
+RNA-seq data is available via the NCBI GEO (https://www.ncbi.nlm.nih.gov/geo/, #GSE229136). TCGA tumor data used to generate Figure 1 is available from cBioPortal. CPTAC data used to generate Figure 1 is avaliable from the NCI proteomic Data Commons. Single-cell RNA sequencing data from Neftel, et al. is available from the Broad Institute Single-Cell Portal.  
 
 ## Running the Code
 There are five R scripts used to generate the figures in Hart, et al. 
