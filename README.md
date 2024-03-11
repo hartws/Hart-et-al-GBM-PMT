@@ -10,4 +10,4 @@ There are five R scripts used to generate the figures in Hart, et al.
 2) TCGA_GBM_PMT.Rmd - this script takes TCGA data and generates the plots seen in Fig. 1A-B and Fig. S2A-B. 
 3) CPTAC_GBM_PMT.Rmd - this script takes CPTAC data and generates the plots seen in Fig. 1C-D and Fig. S2C-D. 
 4) GBM_scRNA_analysis.Rmd - this script takes Neftel, et al. scRNA-seq data and generates the plots seen in Fig. 1E-F and Fig. S2E-F. 
-5) G816_RNAseq_analysis 2022.Rmd - this script takes the RNA-seq data available at [GEO accession number] and generates the plots seen in Figs. 3, S1, S5, and S6.
+5) G816_RNAseq_analysis 2022.Rmd - this script takes the RNA-seq data available NCBI GEO (information above) and generates the plots seen in Figs. 3, S1, S5, and S6.
